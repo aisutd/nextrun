@@ -37,7 +37,9 @@ def calibrate_court(
     def keypoints():
         from .keypoints import KeypointCourtEstimator
 
-        est = KeypointCourtEstimator(spec, cfg.models.court_keypoint_weights, cfg.models.device)
+        est = KeypointCourtEstimator(
+            spec, cfg.models.court_keypoint_weights, cfg.models.court_keypoint_config, cfg.models.device
+        )
         calib = est.estimate_many(frames)
         return LineCourtEstimator(spec).refine(frames[0], calib)
 

@@ -192,10 +192,11 @@ class GameAnalyzer:
             reach_y = min(reach_y, shooter.highest_hand_y())
         dunk = made and rel_d <= ec.dunk_release_rim_dist and reach_y <= rim.bbox[3] + 0.5 * rim.width
         court_xy = shooter.court_xy if shooter is not None else None
-        three, dist_m = None, None
+        three, dist_m, line_m = None, None, None
         if court_xy is not None:
             hoop, dist_m = template.nearest_hoop(court_xy, self.cfg.court)
             three = template.is_three(court_xy, self.cfg.court, hoop) and not dunk
+            line_m = template.three_line_distance(court_xy, self.cfg.court, hoop)
         points = (3 if three else 2) if made else 0
         apex_above_rim_m = None
         if fl.arc is not None:
@@ -208,6 +209,8 @@ class GameAnalyzer:
             "airball": zone_hit is None,
             "shot_xy": court_xy,
             "distance_m": dist_m,
+            "three_line_m": line_m,  # + outside / - inside the 3PT line
+            "three_close": line_m is not None and not dunk and abs(line_m) < ec.three_close_margin_m,
             "make_frame": make_frame,
             "rim": list(rim.bbox),
             "arc_apex_above_rim_m": apex_above_rim_m,

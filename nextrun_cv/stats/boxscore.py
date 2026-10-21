@@ -8,9 +8,10 @@ import pandas as pd
 from ..events.analyzer import GameAnalysis
 from ..identity.tagging import Identities
 
+HEADLINE = ["PTS", "REB", "AST"]  # the stats NextRun tracks first; everything after supports / explains them
 COLUMNS = [
-    "player", "team", "PTS", "FGM", "FGA", "FG%", "3PM", "3PA", "3P%", "2PM", "2PA", "DUNK", "AST",
-    "OREB", "DREB", "REB", "STL", "TOV", "PASS", "DRIB", "TOUCH", "POSS_S", "AIRBALL",
+    "player", "team", *HEADLINE, "FGM", "FGA", "FG%", "3PM", "3PA", "3P%", "2PM", "2PA", "DUNK",
+    "OREB", "DREB", "STL", "TOV", "PASS", "DRIB", "TOUCH", "POSS_S", "AIRBALL",
 ]
 
 

@@ -3,33 +3,25 @@
 Finds basketball court keypoints in a camera frame, maps image pixels to real court
 positions in feet (homography), draws the 3-point lines, and classifies positions as 2PT / 3PT.
 
-## Files
-| File | What it is |
-|---|---|
-| `weights/court_model.pt` | YOLO11s-pose model, 24 court keypoints |
-| `court_config.json` | Court position (ft) of each keypoint, 3-point line geometry |
-| `court_detector.py` | `CourtDetector` class: keypoints, homography, court position, 2PT/3PT |
-| `demo.py` | Runs everything on an image or video and draws the result |
-
-## Install
-    pip install -r requirements.txt
+> Merged into the main pipeline on `model_merge`: weights are `models/court_model.pt`, keypoint
+> positions are `configs/court_keypoints.json`, and the detector lives in `nextrun_cv/court/keypoints.py`
+> (court feet are converted to the pipeline's meters, origin at center court). Original standalone
+> code + demo: `court-detection` branch / PR #2.
 
 ## Use in code
-    from court_detector import CourtDetector
-    det = CourtDetector('weights/court_model.pt', 'court_config.json')
-    H = det.homography(frame)                    # None if the court isn't found
-    x_ft, y_ft = det.to_court(H, [(px, py)])[0]  # e.g. a player's feet or the ball
-    det.shot_zone(x_ft, y_ft)                    # '2PT', '3PT' or 'CLOSE'
-    det.draw_three_point_lines(frame, H)
-
-## Demo
-    python demo.py --source game.mp4 --output out.mp4
-    python demo.py --source frame.jpg --output out.jpg
+    from nextrun_cv.config import Config
+    from nextrun_cv.court import template
+    from nextrun_cv.court.keypoints import KeypointCourtEstimator
+    cfg = Config()                                  # highschool court by default
+    est = KeypointCourtEstimator(cfg.court, cfg.models.court_keypoint_weights, cfg.models.court_keypoint_config)
+    calib = est.estimate(frame)                     # raises CourtNotFound if the court isn't found
+    x_m, y_m = calib.image_to_court([(px, py)])[0]  # e.g. a player's feet
+    template.three_line_distance((x_m, y_m), cfg.court)   # + outside (3PT) / - inside (2PT), meters
 
 ## Court coordinates
-x = across the court (0 = far sideline, 50 = near sideline), y = along the court
+In `configs/court_keypoints.json`: x = across the court (0 = far sideline, 50 = near sideline), y = along the court
 (0 = left baseline, 84 = right baseline). High-school court, 84 x 50 ft.
-Positions in `court_config.json` were measured from the training labels, using the paint (12 ft wide, free-throw line at 19 ft) as reference.
+Positions were measured from the training labels, using the paint (12 ft wide, free-throw line at 19 ft) as reference.
 
 ## Keypoints (24)
 | IDs | Left basket | IDs | Right basket |
@@ -42,7 +34,7 @@ Positions in `court_config.json` were measured from the training labels, using t
 | 8 / 9 | half-court line at far / near sideline | | |
 
 ## Accuracy
-See RESULTS section below (filled in after evaluation).
+See Results below.
 
 ## Limitations
 - Trained on high-school gym footage from two camera setups (elevated corner view, elevated sideline view). New camera angles may need more training data.

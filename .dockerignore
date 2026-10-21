@@ -1,0 +1,10 @@
+.git
+.venv
+data
+runs
+outputs
+notebooks
+tests
+**/__pycache__
+*.egg-info
+/yolo*.pt

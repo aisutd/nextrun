@@ -9,7 +9,7 @@ from nextrun_cv import pipeline
 from nextrun_cv.config import Config
 from nextrun_cv.video import probe
 
-from synth import FPS, HAND_Y, Game, arc, make_calib, shot_path
+from synth import FPS, HAND_Y, SPEC, Game, arc, make_calib, shot_path
 
 
 def test_analyze_and_render(tmp_path):
@@ -35,12 +35,12 @@ def test_analyze_and_render(tmp_path):
     (out / "tags.json").write_text(json.dumps({"1": {"name": "A1", "team": "Red"}, "2": {"name": "A2", "team": "Red"},
                                                "3": {"name": "B1", "team": "Blue"}}))
 
-    analysis, ids, frames2 = pipeline.analyze(str(out), Config())
+    analysis, ids, frames2 = pipeline.analyze(str(out), Config(court=SPEC))
     bs = pd.read_csv(out / "boxscore.csv").set_index("player")
     assert bs.loc["A2", "PTS"] == 2 and bs.loc["A1", "AST"] == 1
     for name in ("events.json", "flights.json", "team_totals.csv", "identities.json", "shot_chart.png", "pass_network.png", "possession.png"):
         assert (out / name).exists(), name
 
-    path = pipeline.render(str(video), str(out), Config(), analysis, ids, frames2)
+    path = pipeline.render(str(video), str(out), Config(court=SPEC), analysis, ids, frames2)
     info = probe(path)
     assert info.n_frames == len(frames)

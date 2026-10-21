@@ -1,6 +1,6 @@
 """Score pipeline output against hand-labelled ground truth.
 
-Ground truth (eval/labels/<clip>.json):
+Ground truth (labels/<clip>.json):
 {
   "fps": 30,
   "events": [
@@ -12,7 +12,7 @@ Ground truth (eval/labels/<clip>.json):
 }
 Label with any video player that shows timestamps; ±tolerance seconds is allowed when matching.
 
-Usage: python eval/score.py outputs/game1/events.json eval/labels/game1.json [--tol 0.5]
+Usage: python scripts/score_events.py outputs/game1/events.json labels/game1.json [--tol 0.5]
 """
 from __future__ import annotations
 

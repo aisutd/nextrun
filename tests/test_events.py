@@ -2,12 +2,12 @@ from nextrun_cv.config import Config
 from nextrun_cv.events.analyzer import GameAnalyzer
 from nextrun_cv.stats.boxscore import box_score
 
-from synth import FPS, HAND_Y, Game, arc, ids_red_blue, make_calib, shot_path
+from synth import FPS, HAND_Y, SPEC, Game, arc, ids_red_blue, make_calib, shot_path
 
 
 def _run(game: Game):
     ids = ids_red_blue()
-    a = GameAnalyzer(Config(), FPS, ids, make_calib()).analyze(game.frames)
+    a = GameAnalyzer(Config(court=SPEC), FPS, ids, make_calib()).analyze(game.frames)
     return a, box_score(a, ids).set_index("player")
 
 

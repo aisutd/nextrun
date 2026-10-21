@@ -1,5 +1,5 @@
-"""Court geometry in meters: named landmarks (used for homography correspondences and as the
-court-keypoint model's label order), polylines (drawing / line matching) and 3PT classification.
+"""Court geometry in meters: named landmarks (homography correspondences for manual / line
+calibration), polylines (drawing / line matching) and 3PT classification.
 
 Frame: origin at center court, +x toward the right basket, +y across the court."""
 from __future__ import annotations
@@ -63,37 +63,6 @@ def landmarks(spec: CourtSpec) -> dict[str, tuple[float, float]]:
     return out
 
 
-_HALF_KP = [
-    "base_top", "c3_base_top", "paint_base_top", "paint_base_bot", "c3_base_bot", "base_bot", "backboard",
-    "c3_arc_top", "c3_arc_bot", "paint_ft_top", "ft_center", "paint_ft_bot", "hash_top", "arc_top", "hash_bot",
-]
-KEYPOINT_NAMES = (
-    ["L_" + n for n in _HALF_KP] + ["R_" + n for n in _HALF_KP]
-    + ["mid_top", "center_top", "center", "center_bot", "mid_bot"]
-)
-
-
-def keypoint_order() -> list[str]:
-    """Fixed label order for the court-keypoint pose model. Independent of the court spec: landmarks
-    a court doesn't have (e.g. hash marks on a FIBA court) are simply skipped when solving."""
-    return list(KEYPOINT_NAMES)
-
-
-def keypoint_flip_idx() -> list[int]:
-    """Horizontal image flip mirrors court x: swap L_* and R_* landmarks."""
-    names = keypoint_order()
-    idx = {n: i for i, n in enumerate(names)}
-    out = []
-    for n in names:
-        if n.startswith("L_"):
-            out.append(idx["R_" + n[2:]])
-        elif n.startswith("R_"):
-            out.append(idx["L_" + n[2:]])
-        else:
-            out.append(idx[n])
-    return out
-
-
 def _arc(cx, cy, r, a0, a1, n=48):
     a = np.linspace(a0, a1, n)
     return np.stack([cx + r * np.cos(a), cy + r * np.sin(a)], axis=1)
@@ -146,12 +115,19 @@ def nearest_hoop(xy, spec: CourtSpec) -> tuple[int, float]:
 
 
 def is_three(xy, spec: CourtSpec, hoop: int | None = None) -> bool:
-    """True if a shot from court position `xy` (shooter's feet) is a three-pointer.
-    Beyond the arc OR in the corner beyond the straight corner line."""
-    hs = hoop_positions(spec)
+    """True if a shot from court position `xy` (shooter's feet) is a three-pointer."""
+    return three_line_distance(xy, spec, hoop) >= 0
+
+
+def three_line_distance(xy, spec: CourtSpec, hoop: int | None = None) -> float:
+    """Signed distance in meters from court position `xy` to the 3-point line: + outside (three),
+    - inside (two). Straight corner segment up to where it meets the arc, arc beyond that."""
     if hoop is None:
         hoop, _ = nearest_hoop(xy, spec)
-    hx, hy = hs[hoop]
-    d = math.hypot(xy[0] - hx, xy[1] - hy)
+    hx, _ = hoop_positions(spec)[hoop]
+    from_baseline = spec.length / 2 - abs(xy[0]) if xy[0] * hx > 0 else spec.length / 2 + abs(xy[0])
     yc = spec.width / 2 - spec.corner_three_offset
-    return d >= spec.three_pt_radius or abs(xy[1]) >= yc
+    join = spec.hoop_from_baseline + math.sqrt(max(spec.three_pt_radius**2 - yc**2, 0.0))
+    if from_baseline < join:
+        return abs(xy[1]) - yc
+    return math.hypot(xy[0] - hx, xy[1]) - spec.three_pt_radius

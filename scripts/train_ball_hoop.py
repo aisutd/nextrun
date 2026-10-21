@@ -4,7 +4,7 @@ bigger model usually improve ball recall substantially.
 
 data.yaml (YOLO detect format, e.g. exported from Roboflow) must use names: {0: ball, 1: rim}.
 
-  python train/train_ball_hoop.py --data /content/data.yaml --model yolo11s.pt --imgsz 1280 --epochs 100
+  python scripts/train_ball_hoop.py --data /content/data.yaml --model yolo11s.pt --imgsz 1280 --epochs 100
 """
 import argparse
 

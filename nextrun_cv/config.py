@@ -47,7 +47,8 @@ class CourtSpec:
 class ModelConfig:
     ball_hoop_weights: str = str(REPO_ROOT / "models" / "ball_hoop_model.pt")
     player_weights: str = "yolo11m-pose.pt"  # pose model: person boxes + 17 COCO keypoints
-    court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_keypoints.pt")
+    court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_model.pt")
+    court_keypoint_config: str = str(REPO_ROOT / "configs" / "court_keypoints.json")
     tracker_cfg: str = str(REPO_ROOT / "configs" / "botsort_reid.yaml")
     device: str | None = None  # None -> ultralytics picks cuda if available
     player_conf: float = 0.35
@@ -84,6 +85,7 @@ class EventConfig:
     dunk_release_rim_dist: float = 1.5  # release within this many rim widths of the rim
     dribble_min_amp: float = 0.15  # bounce amplitude as fraction of holder bbox height
     rebound_window_s: float = 6.0
+    three_close_margin_m: float = 0.46  # within 1.5 ft of the 3PT line ~ court-mapping error: flag as uncertain
 
 
 @dataclass
@@ -94,7 +96,8 @@ class TeamConfig:
 
 @dataclass
 class Config:
-    court: CourtSpec = field(default_factory=CourtSpec)
+    # high-school court matches the court-keypoint model's geometry (84 x 50 ft, 19'9" arc)
+    court: CourtSpec = field(default_factory=lambda: CourtSpec.preset("highschool"))
     models: ModelConfig = field(default_factory=ModelConfig)
     ball: BallTrackConfig = field(default_factory=BallTrackConfig)
     possession: PossessionConfig = field(default_factory=PossessionConfig)

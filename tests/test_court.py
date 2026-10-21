@@ -2,10 +2,11 @@ import cv2
 import numpy as np
 import pytest
 
-from nextrun_cv.config import Config, CourtSpec
+from nextrun_cv.config import REPO_ROOT, Config, CourtSpec
 from nextrun_cv.court import template
 from nextrun_cv.court.auto import calibrate_court
 from nextrun_cv.court.base import CourtCalib, homography_from_landmarks
+from nextrun_cv.court.keypoints import load_keypoint_config
 from nextrun_cv.court.lines import LineCourtEstimator
 
 SPEC = CourtSpec()
@@ -26,15 +27,24 @@ def test_is_three(xy, three):
     assert template.is_three(xy, SPEC) is three
 
 
+@pytest.mark.parametrize(
+    "xy,dist",
+    [
+        ((12.8 - 1.6 - 6.02 - 1.0, 0.0), 1.0),  # 1 m beyond the top of the arc
+        ((12.8 - 1.0, 6.0), -0.02),  # behind the hoop line: straight corner line, just inside
+        ((12.8 - 0.5, 7.0), 0.98),  # deep corner
+    ],
+)
+def test_three_line_distance_highschool(xy, dist):
+    hs = CourtSpec.preset("highschool")
+    assert template.three_line_distance(xy, hs) == pytest.approx(dist, abs=0.01)
+    assert template.is_three(xy, hs) is (dist >= 0)
+
+
 def test_presets_corner_line_meets_arc():
     for name in ("fiba", "nba", "ncaa", "highschool"):
         s = CourtSpec.preset(name)
         assert s.width / 2 - s.corner_three_offset <= s.three_pt_radius
-
-
-def test_keypoint_flip_idx_is_involution():
-    f = template.keypoint_flip_idx()
-    assert [f[i] for i in f] == list(range(len(f)))
 
 
 def _camera_H() -> np.ndarray:
@@ -95,60 +105,56 @@ def test_lines_refines_rough_manual_clicks():
 def test_lines_auto_from_scratch():
     Hc2i = _camera_H()
     frame = _render_court(Hc2i)
-    cfg = Config()
+    cfg = Config(court=SPEC)
     cfg.court_method = "lines"
     calib = calibrate_court([frame], cfg)
     assert calib.conf > 0.5
     assert _court_error(calib, Hc2i) < 0.5
 
 
-def _mirror_estimator(spec):
+KP_CONFIG = REPO_ROOT / "configs" / "court_keypoints.json"
+
+
+def test_keypoint_config_matches_highschool_court():
+    """The court-keypoint model's measured geometry must agree with the highschool preset the pipeline
+    uses for 3PT calls."""
+    hs = CourtSpec.preset("highschool")
+    kp = load_keypoint_config(KP_CONFIG)
+    assert np.isclose(kp["length_m"], hs.length, atol=0.05) and np.isclose(kp["width_m"], hs.width, atol=0.05)
+    lm = template.landmarks(hs)
+    for i, name in [(2, "L_paint_base_top"), (7, "L_paint_ft_bot"), (13, "R_paint_base_bot"), (16, "R_paint_ft_top")]:
+        assert np.allclose(kp["court_m"][i], lm[name], atol=0.05), name
+    f = kp["flip_idx"]
+    assert [f[i] for i in f] == list(range(len(f)))
+
+
+def _keypoint_estimator(spec):
     from nextrun_cv.court.keypoints import KeypointCourtEstimator
 
     est = object.__new__(KeypointCourtEstimator)  # skip weight loading
-    est.spec, est.names, est.valid = spec, template.keypoint_order(), set(template.landmarks(spec))
+    est.spec, est.kp = spec, load_keypoint_config(KP_CONFIG)
     return est
 
 
-def test_keypoint_estimator_fixes_left_right_swap():
-    from nextrun_cv.court.keypoints import _mirror_name, orientation_sign
+def test_keypoint_estimator_maps_court_and_fixes_left_right_swap():
+    from nextrun_cv.court.keypoints import orientation_sign
 
-    Hc2i = _camera_H()
-    lm = template.landmarks(SPEC)
-    names = ["R_base_top", "R_base_bot", "R_paint_base_top", "R_paint_ft_top", "R_paint_ft_bot", "R_arc_top", "mid_top"]
-    pts = cv2.perspectiveTransform(np.float32([lm[n] for n in names]).reshape(-1, 1, 2), Hc2i).reshape(-1, 2)
-    est = _mirror_estimator(SPEC)
-    frame = np.zeros((720, 1280, 3), np.uint8)
-    for labels in (names, [_mirror_name(n) for n in names]):  # correct, and as if the model swapped halves
-        est.detect = lambda f, labels=labels: {n: tuple(map(float, p)) for n, p in zip(labels, pts)}
-        calib = est.estimate(frame)
-        assert orientation_sign(calib.H, (640, 360)) > 0
-        assert np.allclose(calib.image_to_court(pts[:1])[0], lm["R_base_top"], atol=0.05)
-
-
-def test_prepare_court_dataset_cleans_and_densifies():
-    import importlib.util
-    from pathlib import Path
-
-    p = Path(__file__).resolve().parent.parent / "train" / "prepare_court_dataset.py"
-    spec_ = importlib.util.spec_from_file_location("prep", p)
-    prep = importlib.util.module_from_spec(spec_)
-    spec_.loader.exec_module(prep)
-    lm = template.landmarks(prep.SPEC)
+    spec = CourtSpec.preset("highschool")
+    est = _keypoint_estimator(spec)
+    lm = template.landmarks(spec)
     names = ["R_base_top", "R_base_bot", "mid_top", "mid_bot"]
-    img = np.float32([[1700, 300], [1850, 1000], [100, 330], [20, 1050]])
-    H = cv2.getPerspectiveTransform(np.float32([lm[n] for n in names]), img)
-    kp = np.zeros((48, 3))
-    src_idx = {v: k for k, v in prep.SRC_MAP.items()}
-    labeled = ["R_base_top", "R_paint_base_top", "R_paint_base_bot", "R_paint_ft_top", "R_paint_ft_bot",
-               "R_ft_center", "R_arc_top", "R_c3_arc_top", "mid_top", "center"]
-    for n in labeled:
-        u, v = cv2.perspectiveTransform(np.float32([[lm[n]]]), H)[0, 0]
-        kp[src_idx[n]] = [u / 1920, v / 1080, 2]
-    kp[src_idx["R_hash_top"]] = [0.1, 0.9, 2]  # mislabeled point
-    out, info = prep.convert(kp, 1920, 1080)
-    assert "R_hash_top" not in out or abs(out["R_hash_top"][1] - 0.9 * 1080) > 50  # outlier dropped/replaced
-    assert info["inliers"] == len(labeled)
-    assert info["added"] > 0 and "center_top" in out
-    u, v = cv2.perspectiveTransform(np.float32([[lm["center_top"]]]), H)[0, 0]
-    assert np.allclose(out["center_top"], (u, v), atol=1.0)
+    img = np.float32([[1180, 300], [1250, 690], [80, 330], [10, 700]])
+    Hc2i = cv2.getPerspectiveTransform(np.float32([lm[n] for n in names]), img)
+    ids = [10, 12, 13, 15, 16, 17, 22, 8]  # right half + half-court line
+    court = np.float32([est.kp["court_m"][i] for i in ids])
+    pts = cv2.perspectiveTransform(court.reshape(-1, 1, 2), Hc2i).reshape(-1, 2)
+    frame = np.zeros((720, 1280, 3), np.uint8)
+    flip = est.kp["flip_idx"]
+    for labels in (ids, [flip[i] for i in ids]):  # correct, and as if the model swapped halves
+        calib = est.estimate(frame, {i: tuple(map(float, p)) for i, p in zip(labels, pts)})
+        assert orientation_sign(calib.H, (640, 360)) > 0
+        assert calib.conf > 0.9
+        assert np.allclose(calib.image_to_court(pts), court, atol=0.05)
+        # a player at the top of the right arc, 1 m further out, is a three
+        x3 = calib.court_to_image([[spec.length / 2 - spec.hoop_from_baseline - spec.three_pt_radius - 1, 0]])
+        assert template.is_three(calib.image_to_court(x3)[0], spec)

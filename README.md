@@ -1,95 +1,95 @@
 # NextRun
 
-## Description
-
 NextRun is a computer-vision-driven statistics tracker and community platform for recreational pickup basketball. Players and clubs can upload game footage, automatically track performance metrics, and maintain collectible player cards that evolve through games and challenges.
 
-## Planned Technologies
+**Tech:** Python · FastAPI · PyTorch / Ultralytics YOLO · OpenCV · scikit-learn · PostgreSQL · React Native
 
-- Python, JavaScript/TypeScript, and PostgreSQL
-- React Native
-- FastAPI
-- PyTorch, Ultralytics YOLO, OpenCV, and scikit-learn
+## What it tracks
 
-## Docker Setup
+Headline stats per player: **points, rebounds, assists**. The supporting stats come from the same events:
+FGM/FGA, 2PT/3PT, offensive/defensive rebounds, steals, turnovers, passes, dribbles, possession time.
 
-Make sure Docker Desktop is installed and running.
+## How it works
 
-```bash
-docker compose up -d
-docker compose down
-docker compose ps
+One pipeline (`nextrun_cv`), three models:
+
+| Model | File | Gives us | Needed for |
+|---|---|---|---|
+| Player pose + tracking | YOLO11-pose + BoT-SORT (auto-downloaded) | who is where, hands, feet | possession, passes, who shot / rebounded / assisted |
+| Ball + rim | `models/ball_hoop_model.pt` (YOLOv8n) | ball path, rim position | shots, makes, rebounds |
+| Court keypoints | `models/court_model.pt` (YOLO11s-pose, 24 points) | court position in feet | 2PT vs 3PT, shot chart, ignoring people off the court |
+
+```
+video ─► detect (players, ball, rims) ─► calibrate court ─► tag players ─► analyze events ─► box score
+                    GPU, once                 keypoints → lines → manual           cheap, re-runnable
 ```
 
-This is a generic starter configuration. The team can add project-specific dependencies and startup commands later.
+- **Points:** shot = ball leaves a player's hands and rises toward the rim; made = it passes through the rim;
+  2 or 3 from the shooter's feet on the court. Shots within 1.5 ft of the line are flagged `three_close`.
+- **Rebounds:** first player to gain possession after a missed shot (offensive if same team as the shooter).
+- **Assists:** pass to a player who scores within 3 s with at most 2 dribbles.
 
-## Computer-vision pipeline (`nextrun_cv`)
+Every threshold lives in `nextrun_cv/config.py`.
 
-Combines the team's models into one stat-tracking pipeline for **fixed-camera pickup games**:
+## Repo layout
 
-| Piece | Source | Used for |
-|---|---|---|
-| Player detection + pose + tracking | YOLO11-pose + Ultralytics BoT-SORT (ReID), replaces the TrackID3x3 notebook (`notebooks/NextRun_BodyDetection.ipynb`) | who is where, hands (possession), feet (court position) |
-| Ball + rim detection | `models/ball_hoop_model.pt` (YOLOv8n, classes `ball`, `rim`) | ball trajectory, shots, makes |
-| Court calibration | `nextrun_cv/court/` — 3 methods: **keypoint model** (`models/court_keypoints.pt`, YOLO11n-pose, 35 court landmarks), **line registration**, **manual clicks** (auto fallback chain) | court coordinates, 2PT vs 3PT, shot chart, off-court filtering |
-| Identity | tag track IDs once → names/teams; jersey-colour re-linking + team clustering | per-player stats |
-| Events | possession, dribbles, passes, shots, make/miss, 3PT, dunks, rebounds (O/D), steals, turnovers, assists, ball arcs | box score |
+```
+backend/        FastAPI app (upload game → stats)
+nextrun_cv/     the CV pipeline
+  detect/         players.py, ball_hoop.py, ball_track.py
+  court/          keypoints.py (court model), lines.py, manual.py, template.py (court geometry, 3PT)
+  identity/       tagging, jersey colour re-linking, team clustering
+  events/         possession, ball flights, analyzer.py (shots, rebounds, assists, ...)
+  stats/          boxscore.py
+  viz/            annotated video, shot chart, pass network
+  pipeline.py     stages: detect / calibrate / analyze / render
+models/         ball_hoop_model.pt, court_model.pt
+configs/        court_keypoints.json (court model geometry), botsort_reid.yaml (tracker)
+notebooks/      NextRun_Pipeline.ipynb (Colab, GPU, run top to bottom)
+scripts/        train_ball_hoop.py, score_events.py (precision/recall vs hand labels)
+docs/           court_detection.md (court model data, accuracy, limits)
+tests/          synthetic games for every event type + API (no GPU needed)
+```
 
-### Quick start (Colab, GPU)
-Open `notebooks/NextRun_Pipeline.ipynb` in Colab and run top to bottom.
+## Run it
 
-### CLI
+**Colab (GPU):** open `notebooks/NextRun_Pipeline.ipynb`, run top to bottom.
+
+**API:**
 ```bash
-pip install -e ".[detect]"            # ultralytics etc.
+pip install -e ".[detect,api]"
+uvicorn backend.app:app --reload               # docs at http://localhost:8000/docs
+# or: docker compose up --build
+```
+| Endpoint | Does |
+|---|---|
+| `POST /games` (video file, `court`) | upload; processing starts in the background |
+| `GET /games/{id}` | status: queued → detecting → calibrating → analyzing → done |
+| `GET /games/{id}/tagging-frame` | frame with tracker ids, to know who is who |
+| `PUT /games/{id}/tags` `{"3": {"name": "Tushaar", "team": "Red"}}` | name players, re-run stats |
+| `GET /games/{id}/stats` | box score per player + team (PTS, REB, AST first) |
+| `GET /games/{id}/events` | event log |
+
+**CLI:**
+```bash
 python -m nextrun_cv detect game.mp4 -o outputs/game1          # GPU-heavy, once
-# look at outputs/game1/tagging_frame.jpg, write outputs/game1/tags.json:
-#   {"3": {"name": "Tushaar", "team": "Red"}, "7": {"name": "Juan", "team": "Blue"}}
-python -m nextrun_cv calibrate game.mp4 -o outputs/game1 [--court-points points.json] [--court nba]
-python -m nextrun_cv analyze -o outputs/game1                  # cheap; re-run after changing tags/config
+# look at outputs/game1/tagging_frame.jpg, write outputs/game1/tags.json
+python -m nextrun_cv calibrate game.mp4 -o outputs/game1 [--court-points points.json]
+python -m nextrun_cv analyze -o outputs/game1                  # re-run after changing tags/config
 python -m nextrun_cv render game.mp4 -o outputs/game1          # annotated.mp4
 ```
-Outputs: `boxscore.csv`, `team_totals.csv`, `events.json`, `flights.json` (ball arcs), `shot_chart.png`,
-`pass_network.png`, `possession.png`, `annotated.mp4`.
+Outputs: `boxscore.csv`, `team_totals.csv`, `events.json`, `shot_chart.png`, `pass_network.png`, `annotated.mp4`.
 
-### Layout
-```
-nextrun_cv/
-  detect/    players.py (pose+BoT-SORT), ball_hoop.py, ball_track.py (Kalman + gap fill, stable rims)
-  court/     template.py (geometry, 3PT), manual.py, lines.py, keypoints.py, auto.py
-  identity/  appearance.py, teams.py, tagging.py
-  events/    possession.py, flight.py (arcs), analyzer.py (all event rules)
-  stats/     boxscore.py
-  viz/       overlay.py (annotated video), charts.py
-  pipeline.py, cli.py, config.py (every threshold)
-train/       train_ball_hoop.py, prepare_court_dataset.py, train_court_keypoints.py, eval_court_keypoints.py
-eval/        score.py (precision/recall vs hand labels)
-tests/       synthetic games covering every event type (no GPU needed)
-```
-
-### Court-keypoint model
-Trained on the public **basketball-court-detection-2** dataset (850 NBA broadcast frames, CC BY 4.0, via the
-Hugging Face mirror `koppolusameer/basketball-keypoint-detection-yolov8`). `prepare_court_dataset.py` maps its
-48 keypoints to our named landmarks, drops mislabeled points with RANSAC, and fills in unlabeled visible
-landmarks from each image's homography. At inference the visible keypoints → RANSAC homography → line
-refinement; a left/right-half mix-up is detected from the homography's orientation and fixed.
+## Development
 ```bash
-pip install -e ".[train]"
-python train/prepare_court_dataset.py --out data/court_kp
-python train/train_court_keypoints.py            # copies best.pt to models/court_keypoints.pt
-python train/eval_court_keypoints.py --split test
-```
-The training data is NBA arenas; for gyms/outdoor courts, fine-tune with frames from your own camera
-(`--model models/court_keypoints.pt`). Manual clicking remains the most reliable option for a fixed camera.
-
-### Development
-```bash
-python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # Windows (use .venv/bin on macOS/Linux)
+python -m venv .venv && .venv/Scripts/pip install -e ".[dev]"   # Windows (.venv/bin on macOS/Linux)
 pytest
 ```
 
-### Known limits / next steps
-- Event rules are heuristic v1; tune thresholds in `Config` against labelled clips (`eval/score.py`).
-- Blocks, free throws, fouls not detected yet.
-- Court-keypoint model has only seen NBA broadcast footage; expect weaker results on pickup courts until fine-tuned.
-- The ball model is YOLOv8n; retraining at `imgsz=1280` (`train/train_ball_hoop.py`) should help with small balls.
-- Moving/panning cameras need per-frame calibration (not supported yet).
+## Known limits / next steps
+- Fixed cameras only; a panning camera needs per-frame court calibration.
+- Court model is trained on high-school gyms (corner + sideline views); other angles or outdoor courts may
+  need more labelled frames (see `docs/court_detection.md`). Manual clicks are the fallback.
+- Event rules are heuristic v1: label a few clips and tune `Config` with `scripts/score_events.py`.
+- Ball model is YOLOv8n; retraining at `imgsz=1280` (`scripts/train_ball_hoop.py`) should help with small balls.
+- Not detected yet: blocks, free throws, fouls.
