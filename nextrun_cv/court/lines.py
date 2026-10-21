@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 from scipy.optimize import minimize
 
-from ..config import CourtSpec
+from ..config import CourtSpec, FusionConfig
 from . import template
 from .base import CourtCalib, CourtEstimator, CourtNotFound
 
@@ -34,6 +34,19 @@ def line_mask(frame: np.ndarray, ignore_boxes=None, tophat_px: int | None = None
     for x1, y1, x2, y2 in ignore_boxes or []:
         m[max(0, int(y1)) : int(y2), max(0, int(x1)) : int(x2)] = 0
     return m
+
+
+MIN_SPREAD = 0.01  # (std_u / w) * (std_v / h) of visible template points for a real (non-collapsed) court
+
+
+def _spread_factor(u, v, valid, w, h) -> np.ndarray:
+    """(B,) in [0, 1]: penalize solutions that shrink the court onto a few bright pixels. A degenerate
+    homography can pile every template point onto one painted line and look perfectly aligned."""
+    n = np.maximum(valid.sum(1), 1)
+    uu, vv = np.where(valid, np.nan_to_num(u), 0.0), np.where(valid, np.nan_to_num(v), 0.0)
+    su = np.sqrt(np.maximum((uu**2).sum(1) / n - (uu.sum(1) / n) ** 2, 0)) / w
+    sv = np.sqrt(np.maximum((vv**2).sum(1) / n - (vv.sum(1) / n) ** 2, 0)) / h
+    return np.minimum(1.0, su * sv / MIN_SPREAD)
 
 
 def detect_lines(mask: np.ndarray, max_lines: int = 12) -> list[np.ndarray]:
@@ -104,6 +117,7 @@ class LineCourtEstimator(CourtEstimator):
         self.x_lines = sorted({-L2, -ftx, 0.0, ftx, L2})
         self.y_lines = sorted({-W2, -yc, -pw2, pw2, yc, W2})
         self.ignore_boxes = None
+        self.rims = None  # list[RimObs]: constrain the search (floor below rims, rim above its hoop)
 
     # ---- scoring ----------------------------------------------------------------------------
     def _score_batch(self, Hc2i: np.ndarray, dt: np.ndarray) -> np.ndarray:
@@ -119,7 +133,7 @@ class LineCourtEstimator(CourtEstimator):
         d = np.minimum(dt[vi, ui], self.tau)
         good = (1 - d / self.tau) * valid
         bad = (d >= self.tau) & valid
-        return good.sum(1) - 0.5 * bad.sum(1)
+        return (good.sum(1) - 0.5 * bad.sum(1)) * _spread_factor(u, v, valid, w, h)
 
     def _cost(self, params: np.ndarray, dt: np.ndarray) -> float:
         H = np.append(params, 1.0).reshape(3, 3)
@@ -154,6 +168,8 @@ class LineCourtEstimator(CourtEstimator):
     def estimate(self, frame: np.ndarray, init: CourtCalib | None = None) -> CourtCalib:
         h, w = frame.shape[:2]
         mask = line_mask(frame, self.ignore_boxes)
+        if self.rims:  # the floor is below the rims: drop sky, walls, building edges
+            mask[: int(min(r.center[1] for r in self.rims)), :] = 0
         dt = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 3)
         if init is not None:
             cands = [init.H_inv]
@@ -170,18 +186,35 @@ class LineCourtEstimator(CourtEstimator):
                 raise CourtNotFound("lines: no valid hypotheses")
             Hs = np.array(Hs)
             scores = np.concatenate([self._score_batch(Hs[i : i + 512], dt) for i in range(0, len(Hs), 512)])
-            cands = list(Hs[np.argsort(-scores)[:5]])
-        best_H, best_cost = None, np.inf
+            top = list(Hs[np.argsort(-scores)[:40]])
+            agreeing = [H for H in top if self._rims_agree(H)]
+            cands = (agreeing or top)[:5]
+        best_H, best_cost, best_agrees = None, np.inf, False
         for H0 in cands:
             H0 = H0 / H0[2, 2]
             res = minimize(self._cost, H0.ravel()[:8], args=(dt,), method="Powell", options={"maxiter": 3000, "xtol": 1e-4})
-            if res.fun < best_cost:
-                best_H, best_cost = np.append(res.x, 1.0).reshape(3, 3), res.fun
+            H = np.append(res.x, 1.0).reshape(3, 3)
+            agrees = self._rims_agree(H)
+            if (agrees, -res.fun) > (best_agrees, -best_cost):  # a fit the rims agree with beats a better-aligned one
+                best_H, best_cost, best_agrees = H, res.fun, agrees
         if best_H is None or -best_cost <= 0:
             raise CourtNotFound("lines: no hypothesis aligned with the painted lines")
         conf = self._confidence(best_H, dt)
         Hi2c = np.linalg.inv(best_H)
         return CourtCalib(Hi2c / Hi2c[2, 2], self.name, conf, self.spec, (w, h))
+
+    def _rims_agree(self, Hc2i: np.ndarray) -> bool:
+        """Detected rims sit above their hoop's floor point under this court->image homography."""
+        if not self.rims:
+            return False
+        from .. import fusion
+
+        try:
+            Hi2c = np.linalg.inv(Hc2i)
+        except np.linalg.LinAlgError:
+            return False
+        calib = CourtCalib(Hi2c / Hi2c[2, 2], self.name, 1.0, self.spec)
+        return any(fusion.check_rim(calib, r, FusionConfig()).ok for r in self.rims)
 
     def _confidence(self, Hc2i: np.ndarray, dt: np.ndarray) -> float:
         """Fraction of visible projected template points within 3 px of a detected line pixel."""
@@ -194,7 +227,7 @@ class LineCourtEstimator(CourtEstimator):
         if valid.sum() < 30:
             return 0.0
         d = dt[v[valid].astype(int), u[valid].astype(int)]
-        return float((d < 3).mean())
+        return float((d < 3).mean() * _spread_factor(u[None], v[None], valid[None], w, h)[0])
 
     def refine(self, frame: np.ndarray, calib: CourtCalib) -> CourtCalib:
         """Polish an existing calibration (e.g. from 4 rough manual clicks) against painted lines."""

@@ -27,7 +27,7 @@ def _fake_detect(video, out_dir, cfg, progress=True):
     return g.frames
 
 
-def _fake_calibrate(video, out_dir, cfg, manual_points=None):
+def _fake_calibrate(video, out_dir, cfg, manual_points=None, venue=None):
     calib = make_calib()
     calib.save(Path(out_dir) / "court.json")
     return calib
@@ -83,4 +83,11 @@ def test_analyze_frame(client, monkeypatch):
     r = client.post("/frames/analyze", files={"image": ("f.jpg", jpg.tobytes())})
     assert r.status_code == 200 and r.json()["shape"] == [72, 128, 3]
     assert client.post("/frames/analyze", files={"image": ("f.jpg", b"nope")}).status_code == 400
+
+
+def test_venues(client):
+    assert "trackid3x3_outdoor" in client.get("/venues").json()
+    r = client.post("/games", files={"video": ("g.mp4", b"x")}, data={"venue": "trackid3x3_outdoor"})
+    assert r.status_code == 202 and r.json()["court"] == "fiba" and r.json()["venue"] == "trackid3x3_outdoor"
+    assert client.post("/games", files={"video": ("g.mp4", b"x")}, data={"venue": "nope"}).status_code == 404
 

@@ -19,6 +19,7 @@ import cv2
 import numpy as np
 
 from ..config import CourtSpec
+from . import template
 from .base import CourtCalib, CourtEstimator, CourtNotFound
 
 FT = 0.3048
@@ -57,6 +58,45 @@ def load_keypoint_config(path: str | Path) -> dict:
     }
 
 
+ARC_IDS = {18: 0, 19: 0, 20: 0, 21: 1, 22: 1, 23: 1}  # 3PT-arc keypoints -> hoop index (0 left, 1 right)
+
+
+def ideal_keypoints(spec: CourtSpec) -> dict[int, tuple[float, float]]:
+    """Where the 24 keypoints are by definition on a court of this spec (meters, pipeline frame).
+    Arc keypoints are not included: their position along the arc is a labelling convention."""
+    L2, W2, pw2 = spec.length / 2, spec.width / 2, spec.paint_width / 2
+    yc = W2 - spec.corner_three_offset
+    ftx = L2 - spec.ft_line_from_baseline
+    left = {0: (-L2, -W2), 1: (-L2, -yc), 2: (-L2, -pw2), 3: (-L2, pw2), 4: (-L2, yc), 5: (-L2, W2),
+            6: (-ftx, -pw2), 7: (-ftx, pw2)}
+    out = dict(left)
+    out.update({i + 10: (-x, y) for i, (x, y) in left.items()})
+    out.update({8: (0.0, -W2), 9: (0.0, W2)})
+    return out
+
+
+def keypoints_for_court(kp: dict, spec: CourtSpec, measured_on: CourtSpec | None = None) -> dict[int, tuple[float, float]]:
+    """Court positions of the keypoints on `spec`. The config's positions were measured on a high-school
+    court and include small labelling offsets (e.g. annotators clicking a line's outer edge); those offsets
+    are kept and the court geometry is swapped, so the same model maps NBA / FIBA / high-school courts.
+    Arc keypoints keep their measured angle around the hoop and radial offset from the line."""
+    measured_on = measured_on or CourtSpec.preset("highschool")
+    meas = kp["court_m"]
+    ideal_src, ideal_dst = ideal_keypoints(measured_on), ideal_keypoints(spec)
+    hoops_src, hoops_dst = template.hoop_positions(measured_on), template.hoop_positions(spec)
+    out = {}
+    for i, (x, y) in meas.items():
+        if i in ARC_IDS:
+            hx, hy = hoops_src[ARC_IDS[i]]
+            r, a = np.hypot(x - hx, y - hy), np.arctan2(y - hy, x - hx)
+            r += spec.three_pt_radius - measured_on.three_pt_radius
+            gx, gy = hoops_dst[ARC_IDS[i]]
+            out[i] = (float(gx + r * np.cos(a)), float(gy + r * np.sin(a)))
+        elif i in ideal_dst:
+            out[i] = (x + ideal_dst[i][0] - ideal_src[i][0], y + ideal_dst[i][1] - ideal_src[i][1])
+    return out
+
+
 class KeypointCourtEstimator(CourtEstimator):
     name = "keypoints"
 
@@ -70,6 +110,7 @@ class KeypointCourtEstimator(CourtEstimator):
         self.device = device
         self.kp_conf = kp_conf
         self.kp = load_keypoint_config(config)
+        self.kp["court_m"] = keypoints_for_court(self.kp, spec)
 
     def detect(self, frame: np.ndarray) -> dict[int, tuple[float, float]]:
         """{keypoint id: (u, v)} for confidently detected, in-frame keypoints."""

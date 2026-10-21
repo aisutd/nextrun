@@ -158,3 +158,26 @@ def test_keypoint_estimator_maps_court_and_fixes_left_right_swap():
         # a player at the top of the right arc, 1 m further out, is a three
         x3 = calib.court_to_image([[spec.length / 2 - spec.hoop_from_baseline - spec.three_pt_radius - 1, 0]])
         assert template.is_three(calib.image_to_court(x3)[0], spec)
+
+
+def test_keypoints_follow_court_type():
+    from nextrun_cv.court.keypoints import keypoints_for_court
+
+    kp = load_keypoint_config(KP_CONFIG)
+    hs = keypoints_for_court(kp, CourtSpec.preset("highschool"))
+    assert all(np.allclose(hs[i], kp["court_m"][i]) for i in hs)  # measured court: unchanged
+    nba = CourtSpec.preset("nba")
+    k = keypoints_for_court(kp, nba)
+    lm = template.landmarks(nba)
+    assert np.allclose(k[12], lm["R_paint_base_top"], atol=0.05)  # 16 ft NBA paint, not 12 ft
+    hx = nba.length / 2 - nba.hoop_from_baseline
+    assert abs(np.hypot(k[22][0] - hx, k[22][1]) - nba.three_pt_radius) < 0.15  # on the NBA arc
+
+
+def test_venue_profile_roundtrip(tmp_path):
+    from nextrun_cv.court.venues import load_venue, save_venue
+
+    p = save_venue(str(tmp_path / "gym.json"), {"R_base_top": (100, 200)}, "nba", (3840, 2160))
+    spec, pts = load_venue(str(p), (1920, 1080))
+    assert spec.name == "nba" and pts["R_base_top"] == (50, 100)
+

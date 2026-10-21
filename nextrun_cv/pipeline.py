@@ -21,6 +21,7 @@ from . import fusion
 from .config import Config
 from .court.auto import calibrate_court
 from .court.base import CourtCalib
+from .court.venues import load_venue
 from .detect.ball_track import stabilize_rims, track_ball
 from .events.analyzer import GameAnalysis, GameAnalyzer
 from .identity.appearance import AppearanceBank
@@ -77,9 +78,13 @@ def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool =
     return frames
 
 
-def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points=None) -> CourtCalib:
+def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points=None, venue: str | None = None) -> CourtCalib:
+    """venue: a saved camera profile (venues/<name>.json); sets the court type and the manual points."""
     cfg = cfg or Config()
     out = _out(out_dir)
+    if venue is not None:
+        info = probe(video)
+        cfg.court, manual_points = load_venue(venue, (info.width, info.height))
     tracks = out / "tracks.json.gz"
     frames = load_frames(tracks) if tracks.exists() else []
     n = min(cfg.court_calib_frames, max(1, len(frames))) if frames else cfg.court_calib_frames
@@ -140,11 +145,14 @@ def render(video: str, out_dir: str, cfg: Config | None = None, analysis=None, i
     return path
 
 
-def run(video: str, out_dir: str, cfg: Config | None = None, tags=None, manual_points=None, render_video: bool = True):
+def run(video: str, out_dir: str, cfg: Config | None = None, tags=None, manual_points=None, render_video: bool = True,
+        venue: str | None = None):
     cfg = cfg or Config()
+    if venue is not None:
+        cfg.court = load_venue(venue)[0]
     detect(video, out_dir, cfg)
     try:
-        calibrate(video, out_dir, cfg, manual_points)
+        calibrate(video, out_dir, cfg, manual_points, venue)
     except Exception as e:  # stats still work without a court (no 3PT / shot chart)
         log.warning("court calibration failed, continuing without court mapping: %s", e)
     analysis, ids, frames = analyze(out_dir, cfg, tags)

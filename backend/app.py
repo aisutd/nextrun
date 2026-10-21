@@ -26,6 +26,7 @@ from pydantic import BaseModel
 
 from nextrun_cv import pipeline
 from nextrun_cv.config import REPO_ROOT, Config, CourtSpec
+from nextrun_cv.court.venues import list_venues, load_venue
 from nextrun_cv.stats.boxscore import HEADLINE, team_totals
 
 log = logging.getLogger("nextrun.api")
@@ -42,6 +43,7 @@ class GameStatus(BaseModel):
     id: str
     status: Status
     court: str = "highschool"
+    venue: str | None = None
     court_calibrated: bool = False
     error: str | None = None
 
@@ -84,7 +86,7 @@ def process_game(game_id: str) -> None:
         pipeline.detect(video, str(d), cfg, progress=False)
         _set_status(d, status="calibrating")
         try:
-            pipeline.calibrate(video, str(d), cfg)
+            pipeline.calibrate(video, str(d), cfg, venue=_status(d).venue)
             _set_status(d, court_calibrated=True)
         except Exception as e:  # noqa: BLE001
             log.warning("game %s: court calibration failed: %s", game_id, e)
@@ -97,6 +99,12 @@ def process_game(game_id: str) -> None:
 
 
 # --- routes ------------------------------------------------------------------------------------------
+@app.get("/venues")
+def venues() -> list[str]:
+    """Saved camera profiles (venues/*.json)."""
+    return list_venues()
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
@@ -119,8 +127,18 @@ def analyze_frame(image: UploadFile = File(...)):
 
 
 @app.post("/games", response_model=GameStatus, status_code=202)
-def create_game(background: BackgroundTasks, video: UploadFile = File(...), court: COURTS = Form("highschool")):
-    """Upload a fixed-camera game video. Processing starts in the background; poll GET /games/{id}."""
+def create_game(
+    background: BackgroundTasks,
+    video: UploadFile = File(...),
+    court: COURTS = Form("highschool"),
+    venue: str | None = Form(None),
+):
+    """Upload a fixed-camera game video. Processing starts in the background; poll GET /games/{id}.
+    `venue`: a saved camera profile (GET /venues) - sets the court type and skips court detection."""
+    if venue is not None:
+        if venue not in list_venues():
+            raise HTTPException(404, f"unknown venue {venue!r}")
+        court = load_venue(venue)[0].name
     game_id = uuid.uuid4().hex[:12]
     d = DATA_DIR / game_id
     d.mkdir(parents=True)
@@ -128,7 +146,7 @@ def create_game(background: BackgroundTasks, video: UploadFile = File(...), cour
         while chunk := video.file.read(1 << 20):
             fh.write(chunk)
     Config(court=CourtSpec.preset(court)).save(d / "config.json")
-    s = GameStatus(id=game_id, status="queued", court=court)
+    s = GameStatus(id=game_id, status="queued", court=court, venue=venue)
     (d / "status.json").write_text(s.model_dump_json())
     background.add_task(process_game, game_id)
     return s

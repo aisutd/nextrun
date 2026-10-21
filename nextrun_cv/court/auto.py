@@ -59,6 +59,7 @@ def calibrate_court(
         best = None
         for i, f in enumerate(frames[:3]):  # line search is the slow one; a few frames suffice
             est.ignore_boxes = ignore_boxes_per_frame[i] if ignore_boxes_per_frame else None
+            est.rims = rims_per_frame[i] if rims_per_frame and i < len(rims_per_frame) else None
             try:
                 c = est.estimate(f)
             except CourtNotFound as e:
