@@ -1,0 +1,17 @@
+# BoT-SORT tuned for fixed-camera pickup basketball.
+# - gmc_method none: camera is static, so skip camera-motion compensation (also avoids the
+#   "not enough matching points" warnings seen in the original TrackID3x3 notebook).
+# - longer track_buffer: players get fully occluded by each other for 1-3 s at a time.
+# - with_reid: appearance embeddings help re-associate after occlusion.
+tracker_type: botsort
+track_high_thresh: 0.3
+track_low_thresh: 0.1
+new_track_thresh: 0.4
+track_buffer: 90
+match_thresh: 0.8
+fuse_score: True
+gmc_method: none
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+with_reid: True
+model: auto

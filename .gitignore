@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+outputs/
+runs/
+data/
+videos/
+*.mp4
+*.mov
+*.avi
+!tests/fixtures/*.mp4
+.ipynb_checkpoints/
+/yolo*.pt
