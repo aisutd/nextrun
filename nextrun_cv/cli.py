@@ -14,13 +14,13 @@ import logging
 
 from . import pipeline
 from .config import Config, CourtSpec
-from .court.venues import load_venue
+from .court.venues import apply_venue
 
 
 def _cfg(a) -> Config:
     cfg = Config.load(a.config) if a.config else Config()
     if a.venue:
-        cfg.court = load_venue(a.venue)[0]
+        apply_venue(cfg, a.venue)
     if a.court:
         cfg.court = CourtSpec.preset(a.court)
     if a.court_method:

@@ -106,6 +106,9 @@ class FusionConfig:
     rim_max_offset: float = 1.0  # max horizontal offset, in rim widths
     rim_height_range: tuple[float, float] = (2.5, 7.5)  # rim height above that point, in rim widths (3.05 m ~ 6.7)
     off_court_margin_m: float = 1.0  # people further outside the court than this are dropped
+    # playing area [x_min, x_max, y_min, y_max] in court meters (venue profiles set it, e.g. a 3x3 half
+    # court); None = the whole court
+    play_area: list[float] | None = None
 
 
 @dataclass

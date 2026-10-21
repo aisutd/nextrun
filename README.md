@@ -68,10 +68,13 @@ nextrun_cv/     the CV pipeline
   integration.py  NextRun: all three models as one unit
   fusion.py       geometry between models (rim <-> court, feet -> court, ball -> holder)
   pipeline.py     stages: detect / calibrate / analyze / render
+  datasets.py     training-data tooling (Roboflow downloads, group splits, homography-projected labels)
 models/         ball_hoop_model.pt, court_model.pt (yolo11m-pose.pt downloads here on first run)
 configs/        court_keypoints.json (court model geometry), botsort_reid.yaml (tracker)
-notebooks/      NextRun_Pipeline.ipynb (Colab, GPU, run top to bottom)
-scripts/        train_ball_hoop.py, score_events.py (precision/recall vs hand labels)
+venues/         saved camera calibrations (one per fixed camera / gym)
+notebooks/      NextRun_Pipeline.ipynb (run a game), NextRun_Train.ipynb (retrain models) — Colab, GPU
+scripts/        build_court_dataset.py, build_ball_rim_dataset.py, train.py, eval_court.py,
+                eval_ball_rim.py, score_events.py (event precision/recall vs hand labels)
 docs/           court_detection.md (court model data, accuracy, limits)
 tests/          synthetic games for every event type + API (no GPU needed)
 ```
@@ -89,7 +92,8 @@ uvicorn backend.app:app --reload               # docs at http://localhost:8000/d
 | Endpoint | Does |
 |---|---|
 | `POST /frames/analyze` (image) | one frame through all models: positions, zones, ball holder, baskets |
-| `POST /games` (video file, `court`) | upload; processing starts in the background |
+| `GET /venues` | saved camera profiles |
+| `POST /games` (video file, `court` or `venue`) | upload; processing starts in the background |
 | `GET /games/{id}` | status: queued → detecting → calibrating → analyzing → done |
 | `GET /games/{id}/tagging-frame` | frame with tracker ids, to know who is who |
 | `PUT /games/{id}/tags` `{"3": {"name": "Tushaar", "team": "Red"}}` | name players, re-run stats |
@@ -103,8 +107,37 @@ python -m nextrun_cv detect game.mp4 -o outputs/game1          # GPU-heavy, once
 python -m nextrun_cv calibrate game.mp4 -o outputs/game1 [--court-points points.json]
 python -m nextrun_cv analyze -o outputs/game1                  # re-run after changing tags/config
 python -m nextrun_cv render game.mp4 -o outputs/game1          # annotated.mp4
+python -m nextrun_cv run game.mp4 -o outputs/game2 --venue trackid3x3_outdoor   # known camera: no calibration step
 ```
 Outputs: `boxscore.csv`, `team_totals.csv`, `events.json`, `shot_chart.png`, `pass_network.png`, `annotated.mp4`.
+
+## Venues (one calibration per camera)
+Cameras are fixed, so each gym / court is calibrated once and saved in `venues/<name>.json`: court type,
+~6 clicked court landmarks, and optionally the playing area (e.g. a 3x3 half court) so spectators are
+dropped. Every game from that camera then uses `--venue <name>`; the rim check still runs each game and
+flags a camera that moved. Click points with `nextrun_cv.court.manual.colab_click_landmarks` (notebook)
+and save with `nextrun_cv.court.venues.save_venue`.
+
+## Improving the models
+`notebooks/NextRun_Train.ipynb` (Colab GPU) rebuilds both datasets, scores the current model on every
+domain, trains, scores again on the same test images and installs only if the new model is better
+everywhere. Datasets:
+
+| Model | Sources | Builder |
+|---|---|---|
+| Court (24 keypoints) | Rishabh's HS gym sets (Roboflow) · NBA broadcast (850 frames, HF, CC BY 4.0) · calibrated venue videos (auto-labelled through their homography) | `scripts/build_court_dataset.py` |
+| Ball + rim | Roboflow Universe basketball sets (`--roboflow suggested`) · your labelled frames | `scripts/build_ball_rim_dataset.py` |
+
+Splits are by video / game clip so near-duplicate frames can't inflate test scores. Downloading from
+Roboflow needs a free `ROBOFLOW_API_KEY`.
+
+Current court model, measured with `scripts/eval_court.py` (median position error):
+
+| Domain | Found | Error |
+|---|---|---|
+| High-school gyms, corner + sideline (Rishabh's test set) | 96/97 | ~1.5 ft |
+| NBA broadcast (test clips) | 63/94 | 6.6 ft |
+| TrackID3x3 outdoor 3x3 half court | 28/30 | 18.6 ft — wrong; rejected by the rim check, use the venue profile |
 
 ## Development
 ```bash
@@ -114,8 +147,9 @@ pytest
 
 ## Known limits / next steps
 - Fixed cameras only; a panning camera needs per-frame court calibration.
-- Court model is trained on high-school gyms (corner + sideline views); other angles or outdoor courts may
-  need more labelled frames (see `docs/court_detection.md`). Manual clicks are the fallback.
+- Court model is trained on high-school gyms (corner + sideline views); retrain with the notebook above to
+  cover broadcast / outdoor / half courts. Until then, venue profiles cover any fixed camera.
 - Event rules are heuristic v1: label a few clips and tune `Config` with `scripts/score_events.py`.
-- Ball model is YOLOv8n; retraining at `imgsz=1280` (`scripts/train_ball_hoop.py`) should help with small balls.
+- Ball model is YOLOv8n trained 25 epochs at 640 px; retrain (notebook) at 1280 px with the merged datasets.
+- Tracker IDs fragment (e.g. 16 IDs for 6 players in 20 s of 3x3); tagging + jersey-colour re-linking merge them.
 - Not detected yet: blocks, free throws, fouls.

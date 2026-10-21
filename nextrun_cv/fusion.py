@@ -89,17 +89,20 @@ def annotate_players(frames: list[FrameState], calib: CourtCalib) -> None:
                 p.court_xy = (float(xy[0]), float(xy[1]))
 
 
-def on_court(xy, spec: CourtSpec, margin: float) -> bool:
+def on_court(xy, spec: CourtSpec, margin: float, play_area=None) -> bool:
+    if play_area is not None:
+        x0, x1, y0, y1 = play_area
+        return x0 - margin <= xy[0] <= x1 + margin and y0 - margin <= xy[1] <= y1 + margin
     return abs(xy[0]) <= spec.length / 2 + margin and abs(xy[1]) <= spec.width / 2 + margin
 
 
-def drop_off_court(frames: list[FrameState], calib: CourtCalib, margin: float) -> int:
+def drop_off_court(frames: list[FrameState], calib: CourtCalib, margin: float, play_area=None) -> int:
     """Remove people standing off the court (spectators, benches, next game). Returns how many."""
     n = 0
     for f in frames:
         if f.players:
             keep = [p for p, xy in zip(f.players, calib.image_to_court([p.feet for p in f.players]))
-                    if on_court(xy, calib.spec, margin)]
+                    if on_court(xy, calib.spec, margin, play_area)]
             n += len(f.players) - len(keep)
             f.players = keep
     return n
@@ -126,7 +129,7 @@ def fuse(frames: list[FrameState], calib: CourtCalib | None, cfg: Config) -> dic
     """Apply all court-dependent geometry to tracked frames (in place). Returns a small report."""
     if not court_usable(calib, cfg.fusion):
         return {"court": False}
-    dropped = drop_off_court(frames, calib, cfg.fusion.off_court_margin_m)
+    dropped = drop_off_court(frames, calib, cfg.fusion.off_court_margin_m, cfg.fusion.play_area)
     annotate_players(frames, calib)
     return {"court": True, "court_conf": calib.conf, "off_court_dropped": dropped}
 

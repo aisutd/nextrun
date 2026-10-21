@@ -21,7 +21,7 @@ from . import fusion
 from .config import Config
 from .court.auto import calibrate_court
 from .court.base import CourtCalib
-from .court.venues import load_venue
+from .court.venues import apply_venue, load_venue
 from .detect.ball_track import stabilize_rims, track_ball
 from .events.analyzer import GameAnalysis, GameAnalyzer
 from .identity.appearance import AppearanceBank
@@ -84,7 +84,8 @@ def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points
     out = _out(out_dir)
     if venue is not None:
         info = probe(video)
-        cfg.court, manual_points = load_venue(venue, (info.width, info.height))
+        apply_venue(cfg, venue)
+        manual_points = load_venue(venue, (info.width, info.height))[1]
     tracks = out / "tracks.json.gz"
     frames = load_frames(tracks) if tracks.exists() else []
     n = min(cfg.court_calib_frames, max(1, len(frames))) if frames else cfg.court_calib_frames
@@ -149,7 +150,7 @@ def run(video: str, out_dir: str, cfg: Config | None = None, tags=None, manual_p
         venue: str | None = None):
     cfg = cfg or Config()
     if venue is not None:
-        cfg.court = load_venue(venue)[0]
+        apply_venue(cfg, venue)
     detect(video, out_dir, cfg)
     try:
         calibrate(video, out_dir, cfg, manual_points, venue)

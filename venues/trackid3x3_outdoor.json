@@ -34,5 +34,12 @@
       1580
     ]
   },
-  "notes": "TrackID3x3 outdoor 3x3 half court (fixed iPhone, elevated behind the top of the key). Points picked by hand on frame 900 of the sample video; rim check agrees (offset 0.44 rim widths)."
+  "notes": "TrackID3x3 outdoor 3x3 half court (fixed iPhone, elevated behind the top of the key). Points picked by hand on frame 900 of the sample video; rim check agrees (offset 0.44 rim widths).",
+  "play_area": [
+    3.0,
+    14.0,
+    -7.5,
+    7.5
+  ],
+  "off_court_margin_m": 0.5
 }

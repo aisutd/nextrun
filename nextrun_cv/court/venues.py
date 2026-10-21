@@ -1,7 +1,11 @@
 """Venue profiles: calibrate a fixed camera once, reuse it for every game filmed from it.
 
 venues/<name>.json
-    {"court": "fiba", "image_size": [3840, 2160], "points": {"R_base_top": [988, 1224], ...}, "notes": "..."}
+    {"court": "fiba", "image_size": [3840, 2160], "points": {"R_base_top": [988, 1224], ...},
+     "play_area": [3.0, 14.0, -7.5, 7.5], "off_court_margin_m": 0.5, "notes": "..."}
+
+`play_area` (optional, court meters [x_min, x_max, y_min, y_max]) limits who counts as a player, e.g. the
+3x3 half court; people outside it (+ margin) are dropped as spectators.
 
 `points` are template landmarks (see court/template.py) clicked on one frame. They are rescaled to the
 video's resolution, so a profile made on a 4K frame also works on a 1080p export of the same camera.
@@ -48,3 +52,13 @@ def load_venue(name: str, image_size: tuple[int, int] | None = None) -> tuple[Co
         sx, sy = image_size[0] / w0, image_size[1] / h0
     pts = {k: (u * sx, v * sy) for k, (u, v) in d["points"].items()}
     return CourtSpec.preset(d["court"]), pts
+
+
+def apply_venue(cfg, name: str) -> None:
+    """Set a Config's court type and playing area from a venue profile (in place)."""
+    d = json.loads(venue_path(name).read_text())
+    cfg.court = CourtSpec.preset(d["court"])
+    cfg.fusion.play_area = d.get("play_area")
+    if "off_court_margin_m" in d:
+        cfg.fusion.off_court_margin_m = d["off_court_margin_m"]
+

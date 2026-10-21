@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from nextrun_cv import pipeline
 from nextrun_cv.config import REPO_ROOT, Config, CourtSpec
-from nextrun_cv.court.venues import list_venues, load_venue
+from nextrun_cv.court.venues import apply_venue, list_venues, load_venue
 from nextrun_cv.stats.boxscore import HEADLINE, team_totals
 
 log = logging.getLogger("nextrun.api")
@@ -145,7 +145,10 @@ def create_game(
     with open(d / "video.mp4", "wb") as fh:
         while chunk := video.file.read(1 << 20):
             fh.write(chunk)
-    Config(court=CourtSpec.preset(court)).save(d / "config.json")
+    cfg = Config(court=CourtSpec.preset(court))
+    if venue is not None:
+        apply_venue(cfg, venue)
+    cfg.save(d / "config.json")
     s = GameStatus(id=game_id, status="queued", court=court, venue=venue)
     (d / "status.json").write_text(s.model_dump_json())
     background.add_task(process_game, game_id)
