@@ -14,3 +14,4 @@ videos/
 !tests/fixtures/*.mp4
 .ipynb_checkpoints/
 /yolo*.pt
+models/yolo*.pt

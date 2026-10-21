@@ -45,3 +45,7 @@ class PlayerTracker:
             )
             for i in range(len(ids))
         ]
+
+    def reset(self) -> None:
+        """Forget tracks (next frame is from a different video / unrelated image)."""
+        self.model.predictor = None

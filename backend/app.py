@@ -12,10 +12,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 import uuid
 from pathlib import Path
 from typing import Literal
 
+import cv2
+import numpy as np
 import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -31,6 +34,8 @@ COURTS = Literal["highschool", "fiba", "nba", "ncaa"]
 Status = Literal["queued", "detecting", "calibrating", "analyzing", "done", "failed"]
 
 app = FastAPI(title="NextRun", description="Basketball stat tracking from game video")
+_models = None  # integration.NextRun, loaded on first /frames/analyze
+_models_lock = threading.Lock()
 
 
 class GameStatus(BaseModel):
@@ -95,6 +100,22 @@ def process_game(game_id: str) -> None:
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
+
+
+@app.post("/frames/analyze")
+def analyze_frame(image: UploadFile = File(...)):
+    """One still image through all three models together: court (checked against the rims), players placed
+    on the court with 2PT / 3PT zones, who holds the ball, which basket each rim is."""
+    global _models
+    img = cv2.imdecode(np.frombuffer(image.file.read(), np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "not an image")
+    with _models_lock:  # one set of models, one request at a time
+        if _models is None:
+            from nextrun_cv.integration import NextRun
+
+            _models = NextRun()
+        return _models.analyze_image(img)
 
 
 @app.post("/games", response_model=GameStatus, status_code=202)

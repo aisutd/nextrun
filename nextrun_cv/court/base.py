@@ -25,6 +25,7 @@ class CourtCalib:
     spec: CourtSpec = field(default_factory=CourtSpec)
     image_size: tuple[int, int] | None = None  # (w, h)
     correspondences: dict[str, tuple[float, float]] = field(default_factory=dict)  # landmark -> image px
+    checks: dict = field(default_factory=dict)  # cross-model checks (fusion.validate_court), e.g. rim agreement
 
     @property
     def H_inv(self) -> np.ndarray:
@@ -60,6 +61,7 @@ class CourtCalib:
             "spec": self.spec.__dict__,
             "image_size": self.image_size,
             "correspondences": self.correspondences,
+            "checks": self.checks,
         }
 
     def save(self, path: str | Path) -> None:
@@ -75,6 +77,7 @@ class CourtCalib:
             spec=CourtSpec(**d["spec"]),
             image_size=tuple(d["image_size"]) if d.get("image_size") else None,
             correspondences={k: tuple(v) for k, v in d.get("correspondences", {}).items()},
+            checks=d.get("checks", {}),
         )
 
 

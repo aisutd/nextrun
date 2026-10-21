@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.signal import find_peaks
 
+from .. import fusion
 from ..config import Config
 from ..court import template
 from ..court.base import CourtCalib
@@ -48,7 +49,8 @@ class GameAnalyzer:
         out = GameAnalysis()
         if not frames:
             return out
-        self._annotate_court_positions(frames)
+        if fusion.court_usable(self.calib, self.cfg.fusion):
+            fusion.annotate_players(frames, self.calib)
         segs = compute_possession(frames, lambda tid: self.ids.player(tid), self.cfg.possession, self.fps)
         out.segments = segs
         out.holder = [None] * len(frames)
@@ -193,8 +195,12 @@ class GameAnalyzer:
         dunk = made and rel_d <= ec.dunk_release_rim_dist and reach_y <= rim.bbox[3] + 0.5 * rim.width
         court_xy = shooter.court_xy if shooter is not None else None
         three, dist_m, line_m = None, None, None
+        hoop = fusion.hoop_for_rim(self.calib, rim, self.cfg.fusion)  # the basket the ball went to
         if court_xy is not None:
-            hoop, dist_m = template.nearest_hoop(court_xy, self.cfg.court)
+            if hoop is None:
+                hoop, _ = template.nearest_hoop(court_xy, self.cfg.court)
+            hx, hy = template.hoop_positions(self.cfg.court)[hoop]
+            dist_m = float(np.hypot(court_xy[0] - hx, court_xy[1] - hy))
             three = template.is_three(court_xy, self.cfg.court, hoop) and not dunk
             line_m = template.three_line_distance(court_xy, self.cfg.court, hoop)
         points = (3 if three else 2) if made else 0
@@ -208,6 +214,7 @@ class GameAnalyzer:
             "dunk": bool(dunk),
             "airball": zone_hit is None,
             "shot_xy": court_xy,
+            "hoop": hoop,
             "distance_m": dist_m,
             "three_line_m": line_m,  # + outside / - inside the 3PT line
             "three_close": line_m is not None and not dunk and abs(line_m) < ec.three_close_margin_m,
@@ -245,13 +252,3 @@ class GameAnalyzer:
             return {}
         return {"from_xy": a.court_xy, "to_xy": b.court_xy,
                 "distance_m": float(np.hypot(a.court_xy[0] - b.court_xy[0], a.court_xy[1] - b.court_xy[1]))}
-
-    def _annotate_court_positions(self, frames: list[FrameState]) -> None:
-        if self.calib is None:
-            return
-        for f in frames:
-            if not f.players:
-                continue
-            feet = self.calib.image_to_court([p.feet for p in f.players])
-            for p, xy in zip(f.players, feet):
-                p.court_xy = (float(xy[0]), float(xy[1]))

@@ -17,8 +17,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from . import fusion
 from .config import Config
-from .court.auto import MIN_CONF, calibrate_court
+from .court.auto import calibrate_court
 from .court.base import CourtCalib
 from .detect.ball_track import stabilize_rims, track_ball
 from .events.analyzer import GameAnalysis, GameAnalyzer
@@ -49,22 +50,20 @@ def load_frames(path: Path) -> list[FrameState]:
 
 # ---------------------------------------------------------------------------------------------------
 def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool = True) -> list[FrameState]:
-    from .detect.ball_hoop import BallHoopDetector
-    from .detect.players import PlayerTracker
+    from .integration import NextRun
 
     cfg = cfg or Config()
     out = _out(out_dir)
     info = probe(video)
-    players = PlayerTracker(cfg.models)
-    balls = BallHoopDetector(cfg.models)
+    models = NextRun(cfg)
     bank = AppearanceBank(cfg.teams.sample_every)
     frames: list[FrameState] = []
     total = info.n_frames // cfg.stride if cfg.max_frames is None else cfg.max_frames
     for n, (idx, img) in enumerate(iter_frames(video, cfg.stride, max_frames=cfg.max_frames)):
-        ps = players.update(img)
-        bc, rims = balls.detect(img)
-        frames.append(FrameState(idx, idx / info.fps, ps, None, bc, rims))
-        bank.add(idx, img, ps)
+        f = models.detect(img, idx, idx / info.fps)
+        f.ball = None  # chosen by the ball tracker below, from all candidates over time
+        frames.append(f)
+        bank.add(idx, img, f.players)
         if progress and n % 100 == 0:
             log.info("detect %d/%d frames", n, total)
     track_ball(frames, cfg.ball)
@@ -89,7 +88,8 @@ def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points
     ignore = [[p.bbox for p in f.players] for f in picks] if picks else None
     rims = frames[0].rims if frames else []
     rim_xy = max(rims, key=lambda r: r.conf).center if rims else None
-    calib = calibrate_court(imgs, cfg, manual_points, ignore, rim_xy)
+    rims_per_frame = [f.rims for f in picks] if picks else None
+    calib = calibrate_court(imgs, cfg, manual_points, ignore, rim_xy, rims_per_frame)
     calib.save(out / "court.json")
     return calib
 
@@ -104,8 +104,8 @@ def analyze(out_dir: str, cfg: Config | None = None, tags=None) -> tuple[GameAna
     calib = CourtCalib.load(out / "court.json") if (out / "court.json").exists() else None
     if calib is not None:
         calib.spec = cfg.court
-        if calib.conf >= MIN_CONF:
-            _drop_off_court(frames, calib)
+    report = fusion.fuse(frames, calib, cfg)
+    log.info("fusion: %s", report)
     tags = load_tags(tags if tags is not None else (out / "tags.json" if (out / "tags.json").exists() else None))
     ids = resolve_identities(frames, emb, tags, cfg.teams.n_teams, fps=fps)
     analysis = GameAnalyzer(cfg, fps, ids, calib).analyze(frames)
@@ -151,13 +151,3 @@ def run(video: str, out_dir: str, cfg: Config | None = None, tags=None, manual_p
     if render_video:
         render(video, out_dir, cfg, analysis, ids, frames)
     return analysis, ids
-
-
-def _drop_off_court(frames: list[FrameState], calib: CourtCalib, margin: float = 1.0) -> None:
-    """Remove people standing off the court (spectators, people waiting next game). Replaces the
-    hard-coded `x_center <= 550` filter from the original notebook."""
-    for f in frames:
-        if f.players:
-            xy = calib.image_to_court([p.feet for p in f.players])
-            L2, W2 = calib.spec.length / 2 + margin, calib.spec.width / 2 + margin
-            f.players = [p for p, (x, y) in zip(f.players, xy) if abs(x) <= L2 and abs(y) <= W2]

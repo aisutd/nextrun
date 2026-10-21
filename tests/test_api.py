@@ -66,3 +66,21 @@ def test_upload_tag_and_stats(client):
 
 def test_unknown_game_404(client):
     assert client.get("/games/nope").status_code == 404
+
+
+def test_analyze_frame(client, monkeypatch):
+    import cv2
+    import numpy as np
+
+    from backend import app as api
+
+    class FakeNextRun:
+        def analyze_image(self, img):
+            return {"players": [], "shape": list(img.shape)}
+
+    monkeypatch.setattr(api, "_models", FakeNextRun())
+    ok, jpg = cv2.imencode(".jpg", np.zeros((72, 128, 3), np.uint8))
+    r = client.post("/frames/analyze", files={"image": ("f.jpg", jpg.tobytes())})
+    assert r.status_code == 200 and r.json()["shape"] == [72, 128, 3]
+    assert client.post("/frames/analyze", files={"image": ("f.jpg", b"nope")}).status_code == 400
+

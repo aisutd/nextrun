@@ -46,7 +46,8 @@ class CourtSpec:
 @dataclass
 class ModelConfig:
     ball_hoop_weights: str = str(REPO_ROOT / "models" / "ball_hoop_model.pt")
-    player_weights: str = "yolo11m-pose.pt"  # pose model: person boxes + 17 COCO keypoints
+    # pose model: person boxes + 17 COCO keypoints (auto-downloaded on first use)
+    player_weights: str = str(REPO_ROOT / "models" / "yolo11m-pose.pt")
     court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_model.pt")
     court_keypoint_config: str = str(REPO_ROOT / "configs" / "court_keypoints.json")
     tracker_cfg: str = str(REPO_ROOT / "configs" / "botsort_reid.yaml")
@@ -89,6 +90,17 @@ class EventConfig:
 
 
 @dataclass
+class FusionConfig:
+    """Geometry that ties the models together (see nextrun_cv/fusion.py)."""
+
+    min_court_conf: float = 0.35  # below this a court calibration is not used for positions / 2PT-3PT
+    # a detected rim must sit straight above the floor point under its hoop (projected by the court fit):
+    rim_max_offset: float = 1.0  # max horizontal offset, in rim widths
+    rim_height_range: tuple[float, float] = (2.5, 7.5)  # rim height above that point, in rim widths (3.05 m ~ 6.7)
+    off_court_margin_m: float = 1.0  # people further outside the court than this are dropped
+
+
+@dataclass
 class TeamConfig:
     n_teams: int = 2
     sample_every: int = 5  # sample torso colors every N frames per track
@@ -103,6 +115,7 @@ class Config:
     possession: PossessionConfig = field(default_factory=PossessionConfig)
     events: EventConfig = field(default_factory=EventConfig)
     teams: TeamConfig = field(default_factory=TeamConfig)
+    fusion: FusionConfig = field(default_factory=FusionConfig)
     court_method: str = "auto"  # auto | keypoints | lines | manual
     court_calib_frames: int = 10
     stride: int = 1  # process every Nth frame
