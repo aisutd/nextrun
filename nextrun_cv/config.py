@@ -55,7 +55,15 @@ class ModelConfig:
     player_conf: float = 0.35
     ball_conf: float = 0.25
     rim_conf: float = 0.35
-    imgsz: int = 1280  # ball is tiny in wide shots; higher input size helps a lot
+    # model input size. None = the frame's own long side (capped at max_imgsz): players and the ball are
+    # small in wide fixed-camera shots, and downscaling a 4K frame to 1280 loses most of them
+    imgsz: int | None = None
+    max_imgsz: int = 3840
+
+    def input_size(self, frame_shape) -> int:
+        if self.imgsz:
+            return self.imgsz
+        return min(self.max_imgsz, max(frame_shape[:2]) // 32 * 32)
 
 
 @dataclass

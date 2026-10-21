@@ -147,8 +147,11 @@ def draw_court(frame: np.ndarray, calib: CourtCalib, color=(0, 0, 255)) -> np.nd
     img = frame.copy()
     h, w = img.shape[:2]
     Hc2i = calib.H_inv
+    # a homography's overall sign is arbitrary: "in front of the camera" = same sign as a visible floor point
+    ref = calib.image_to_court([(w / 2, h - 1)])[0]
+    front = np.sign((Hc2i @ [ref[0], ref[1], 1.0])[2]) or 1.0
     for pl in template.polylines(calib.spec):
-        P = np.hstack([pl, np.ones((len(pl), 1))]) @ Hc2i.T
+        P = np.hstack([pl, np.ones((len(pl), 1))]) @ Hc2i.T * front
         ok = P[:, 2] > 1e-6  # in front of the camera
         uv = P[:, :2] / np.where(ok, P[:, 2], 1)[:, None]
         ok &= (np.abs(uv) < 4 * max(w, h)).all(1)

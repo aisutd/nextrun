@@ -25,7 +25,7 @@ class PlayerTracker:
             tracker=self.cfg.tracker_cfg,
             classes=[0],
             conf=self.cfg.player_conf,
-            imgsz=self.cfg.imgsz,
+            imgsz=self.cfg.input_size(frame.shape),
             device=self.cfg.device,
             verbose=False,
         )[0]

@@ -22,7 +22,7 @@ class BallHoopDetector:
         res = self.model.predict(
             frame,
             conf=min(self.cfg.ball_conf, self.cfg.rim_conf),
-            imgsz=self.cfg.imgsz,
+            imgsz=self.cfg.input_size(frame.shape),
             device=self.cfg.device,
             verbose=False,
         )[0]
