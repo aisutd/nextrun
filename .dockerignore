@@ -3,7 +3,6 @@
 data/*
 !data/venues
 results
-src/notebooks
 src/scripts
 tests
 **/__pycache__

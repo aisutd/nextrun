@@ -72,7 +72,6 @@ src/
     datasets.py       training-data tooling (downloads, group splits, homography-projected labels)
   scripts/          build_court_dataset.py, build_ball_rim_dataset.py, train.py, eval_court.py,
                     eval_ball_rim.py, score_events.py (event precision/recall vs hand labels)
-  notebooks/        NextRun_Pipeline.ipynb (run a game), NextRun_Train.ipynb (retrain models): Colab, GPU
 models/           ball_hoop_model.pt, court_model.pt, court_keypoints.json (court model geometry),
                   botsort_reid.yaml (tracker), README.md (court model notes); yolo26m-pose.pt downloads here
 data/             venues/ (saved camera calibrations, tracked); datasets, raw downloads, videos (local only)
@@ -81,8 +80,6 @@ results/          eval reports (tracked); runs/ (training runs) and games/ (proc
 ```
 
 ## Run it
-
-**Colab (GPU):** open `src/notebooks/NextRun_Pipeline.ipynb`, run top to bottom.
 
 **API:**
 ```bash
@@ -116,13 +113,12 @@ Outputs: `boxscore.csv`, `team_totals.csv`, `events.json`, `shot_chart.png`, `pa
 Cameras are fixed, so each gym / court is calibrated once and saved in `data/venues/<name>.json`: court type,
 ~6 clicked court landmarks, and optionally the playing area (e.g. a 3x3 half court) so spectators are
 dropped. Every game from that camera then uses `--venue <name>`; the rim check still runs each game and
-flags a camera that moved. Click points with `nextrun_cv.court.manual.colab_click_landmarks` (notebook)
+flags a camera that moved. Click points with `nextrun_cv.court.manual.cv2_click_landmarks` (OpenCV window)
 and save with `nextrun_cv.court.venues.save_venue`.
 
 ## Improving the models
-`src/notebooks/NextRun_Train.ipynb` (Colab GPU) rebuilds both datasets, scores the current model on every
-domain, trains, scores again on the same test images and installs only if the new model is better
-everywhere. Datasets:
+Training needs an NVIDIA GPU; the full sequence (download data, build both datasets, score the current
+models, train, score again on the same test images, install only if better) is in `HANDOFF.md`. Datasets:
 
 | Model | Sources | Builder |
 |---|---|---|
@@ -159,9 +155,9 @@ pytest
 
 ## Known limits / next steps
 - Fixed cameras only; a panning camera needs per-frame court calibration.
-- Court model is trained on high-school gyms (corner + sideline views); retrain with the notebook above to
-  cover broadcast / outdoor / half courts. Until then, venue profiles cover any fixed camera.
+- Court model is trained on high-school gyms (corner + sideline views); the GPU retraining in `HANDOFF.md`
+  covers broadcast / outdoor / half courts. Until then, venue profiles cover any fixed camera.
 - Event rules are heuristic v1: label a few clips and tune `Config` with `src/scripts/score_events.py`.
-- Ball model is YOLOv8n trained 25 epochs at 640 px; retrain (notebook) at 1280 px with the merged datasets.
+- Ball model is YOLOv8n trained 25 epochs at 640 px; the GPU retraining in `HANDOFF.md` trains YOLO26m at 1024 px on the merged datasets.
 - Tracker IDs fragment (e.g. 16 IDs for 6 players in 20 s of 3x3); tagging + jersey-colour re-linking merge them.
 - Not detected yet: blocks, free throws, fouls.

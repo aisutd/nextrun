@@ -36,7 +36,7 @@ def calibrate_court(
 
     def manual():
         if manual_points is None:
-            raise CourtNotFound("manual: no points given (pass --court-points or click them in the notebook)")
+            raise CourtNotFound("manual: no points given (pass --court-points or --venue)")
         calib = ManualCourtEstimator(spec, manual_points).estimate(frames[0])
         return LineCourtEstimator(spec).refine(frames[0], calib)
 

@@ -7,7 +7,7 @@
 
 Defaults fine-tune from the current model when its classes/keypoints match, so the team's existing
 training isn't thrown away. The previous weights are kept as models/<name>.prev.pt. GPU strongly
-recommended (Colab: src/notebooks/NextRun_Train.ipynb).
+recommended (full sequence: HANDOFF.md).
 """
 from __future__ import annotations
 
