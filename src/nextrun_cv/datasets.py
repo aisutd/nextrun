@@ -31,7 +31,10 @@ def source_group(filename: str) -> str:
     clip share a key. 'clip-a_mp4-0012_jpg.rf.abc.jpg' -> 'clip-a'."""
     base = Path(filename).name.split(".rf.")[0]
     base = re.split(r"_(?:mp4|mov|avi|mkv)-\d+", base, flags=re.I)[0]
-    return re.sub(r"_(?:jpg|jpeg|png)$", "", base, flags=re.I)
+    base = re.sub(r"_(?:jpg|jpeg|png)$", "", base, flags=re.I)
+    # frames exported as an image sequence: 'game-4-q2-07_01-06_53-0157' -> 'game-4-q2-07_01-06_53'
+    clip = re.sub(r"-\d{3,}$", "", base)
+    return clip if len(clip) >= 12 else base
 
 
 def split_for(group: str, val: float = 0.1, test: float = 0.1) -> str:
@@ -75,6 +78,73 @@ def project_keypoints(H_court_to_img: np.ndarray, court_pts: dict[int, tuple[flo
         if 0 <= u < w and 0 <= v < h:
             out[i] = (u, v, 2)
     return out
+
+
+def camera_shift(ref: np.ndarray, img: np.ndarray, width: int = 1280) -> tuple[np.ndarray | None, int]:
+    """Homography ref -> img pixels from background features (ORB + RANSAC), for a fixed camera that may have
+    been nudged between recordings. Returns (H or None, inlier count)."""
+    s = width / ref.shape[1]
+    gray = [cv2.cvtColor(cv2.resize(im, None, fx=s, fy=s), cv2.COLOR_BGR2GRAY) for im in (ref, img)]
+    orb = cv2.ORB_create(4000)
+    (k1, d1), (k2, d2) = (orb.detectAndCompute(g, None) for g in gray)
+    if d1 is None or d2 is None:
+        return None, 0
+    m = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True).match(d1, d2)
+    if len(m) < 20:
+        return None, 0
+    H, inl = cv2.findHomography(np.float32([k1[x.queryIdx].pt for x in m]), np.float32([k2[x.trainIdx].pt for x in m]),
+                                cv2.RANSAC, 3)
+    if H is None:
+        return None, 0
+    S = np.diag([s, s, 1.0])
+    return np.linalg.inv(S) @ H @ S, int(inl.sum())
+
+
+def white_line_mask(frame: np.ndarray) -> np.ndarray:
+    """Court paint lines: bright, unsaturated pixels, blurred so ECC has a gradient to follow."""
+    hls = cv2.cvtColor(frame, cv2.COLOR_BGR2HLS)
+    m = ((hls[..., 1] > 160) & (hls[..., 2] < 90)).astype(np.float32)
+    return cv2.GaussianBlur(m, (0, 0), 2)
+
+
+def render_court_lines(H_court_to_img: np.ndarray, spec, shape: tuple[int, int], thick: int = 3) -> np.ndarray:
+    """Court template lines drawn through a homography (court meters -> pixels), blurred like white_line_mask."""
+    from .court import template
+
+    h, w = shape
+    m = np.zeros(shape, np.float32)
+    # a homography's sign is arbitrary: points in front of the camera share the sign of the image center's floor point
+    g = np.linalg.inv(H_court_to_img) @ [w / 2, h / 2, 1.0]
+    front = np.sign((H_court_to_img @ (g / g[2]))[2]) or 1.0
+    for pl in template.polylines(spec):
+        P = np.c_[pl, np.ones(len(pl))] @ H_court_to_img.T * front
+        ok = P[:, 2] > 1e-9
+        uv = P[:, :2] / np.where(ok, P[:, 2], 1)[:, None]
+        ok &= (np.abs(uv) < 4 * max(w, h)).all(1)
+        for a, b, oa, ob in zip(uv[:-1], uv[1:], ok[:-1], ok[1:]):
+            if oa and ob:
+                cv2.line(m, tuple(map(int, a)), tuple(map(int, b)), 1.0, thick)
+    return cv2.GaussianBlur(m, (0, 0), 2)
+
+
+def refine_to_court_lines(H_court_to_img: np.ndarray, frame: np.ndarray, spec, width: int = 1280,
+                          band_px: int = 15) -> tuple[np.ndarray, float]:
+    """Snap a roughly right court homography onto the frame's painted lines: ECC (homography motion) between the
+    rendered template lines and the white-line mask, looking only within band_px of the template lines (so sky,
+    buildings and neighbouring courts don't pull it away). Returns (court -> image H, ECC correlation; 0 if it
+    failed, in which case H is returned unchanged)."""
+    s = width / frame.shape[1]
+    S = np.diag([s, s, 1.0])
+    small = cv2.resize(frame, None, fx=s, fy=s, interpolation=cv2.INTER_AREA)
+    mask = white_line_mask(small)
+    tmpl = render_court_lines(S @ H_court_to_img, spec, mask.shape)
+    band = cv2.dilate((tmpl > 0.05).astype(np.uint8), np.ones((2 * band_px + 1, 2 * band_px + 1), np.uint8))
+    try:
+        cc, warp = cv2.findTransformECC(tmpl, mask, np.eye(3, dtype=np.float32), cv2.MOTION_HOMOGRAPHY,
+                                        (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 200, 1e-6), band * 255, 5)
+    except cv2.error:
+        return H_court_to_img, 0.0
+    return np.linalg.inv(S) @ warp.astype(float) @ S @ H_court_to_img, float(cc)
 
 
 class YoloWriter:
@@ -127,6 +197,33 @@ def iter_yolo_export(root: Path):
                 yield split_dir.name, img, split_dir / "labels" / f"{img.stem}.txt"
 
 
+def iter_coco_export(root: Path):
+    """(image_path, width, height, [(class_name, x, y, w, h normalized center box)]) for a COCO export
+    (train/valid/test, each with _annotations.coco.json next to its images)."""
+    for ann in sorted(Path(root).glob("*/_annotations.coco.json")):
+        d = json.loads(ann.read_text())
+        cats = {c["id"]: c["name"] for c in d["categories"]}
+        boxes: dict[int, list] = {}
+        for a in d["annotations"]:
+            boxes.setdefault(a["image_id"], []).append(a)
+        for im in d["images"]:
+            p = ann.parent / im["file_name"]
+            if not p.exists():
+                continue
+            w, h = im["width"], im["height"]
+            yield p, w, h, [(cats[a["category_id"]], (a["bbox"][0] + a["bbox"][2] / 2) / w, (a["bbox"][1] + a["bbox"][3] / 2) / h,
+                       a["bbox"][2] / w, a["bbox"][3] / h) for a in boxes.get(im["id"], [])]
+
+
+def hf_dataset_download(repo: str, dest: Path) -> Path:
+    """Public Hugging Face dataset repo -> local snapshot (anonymous; no token needed)."""
+    from huggingface_hub import snapshot_download
+
+    out = Path(dest) / repo.replace("/", "__")
+    snapshot_download(repo, repo_type="dataset", token=False, local_dir=out, max_workers=16)
+    return out
+
+
 def read_data_yaml(root: Path) -> dict:
     import yaml  # ships with ultralytics
 
@@ -137,6 +234,18 @@ def read_data_yaml(root: Path) -> dict:
 # --- class remapping (ball / rim) ------------------------------------------------------------------------
 BALL_NAMES = {"ball", "basketball", "basket ball", "basket-ball", "sports ball", "sports-ball", "sportsball", "bball"}
 RIM_NAMES = {"rim", "hoop", "basket", "basketball hoop", "basketball-hoop", "ring", "rim-net", "hoop-rim"}
+
+
+def rim_with_net(x: float, y: float, w: float, h: float, aspect: float) -> tuple[float, float, float, float]:
+    """Rim box in our convention: rim ring + net (as tall as wide in the scene, what the pipeline's rim
+    thresholds and the original ball/rim model use). Ring-only boxes (scene h/w < 0.6) keep their top
+    edge and are extended down to a square. Normalized center boxes in and out; aspect = scene width /
+    height (image width / height unless the export stretched the frames, e.g. 16:9 squashed to 576x576)."""
+    if h / w >= 0.6 * aspect:
+        return x, y, w, h
+    top = y - h / 2
+    h = min(w * aspect, 1.0 - top)
+    return x, top + h / 2, w, h
 
 
 def ball_rim_class(name: str) -> int | None:

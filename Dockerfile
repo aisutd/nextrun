@@ -5,13 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml README.md ./
-COPY nextrun_cv nextrun_cv
-COPY backend backend
-# editable: nextrun_cv finds models/ and configs/ relative to /app
+COPY src/nextrun_cv src/nextrun_cv
+# editable: nextrun_cv finds models/ and data/venues/ relative to /app
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e ".[detect,api]"
-COPY configs configs
 COPY models models
+COPY data/venues data/venues
 
-ENV NEXTRUN_DATA=/app/outputs
+ENV NEXTRUN_DATA=/app/results/games
 EXPOSE 8000
-CMD ["uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "nextrun_cv.api:app", "--host", "0.0.0.0", "--port", "8000"]

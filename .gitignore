@@ -4,14 +4,21 @@ __pycache__/
 venv/
 *.egg-info/
 .pytest_cache/
-outputs/
-runs/
-data/
-videos/
+.ipynb_checkpoints/
+
+# datasets + videos stay local; camera calibrations are tracked
+data/*
+!data/venues/
 *.mp4
 *.mov
 *.avi
 !tests/fixtures/*.mp4
-.ipynb_checkpoints/
+
+# training runs and processed games stay local; eval reports in results/ are tracked
+results/runs/
+results/games/
+results/*.log
+
 /yolo*.pt
-models/yolo*.pt
+yolo*.pt
+models/*.prev.pt

@@ -1,11 +1,11 @@
 """Command line: python -m nextrun_cv <stage> ...
 
-  python -m nextrun_cv run game.mp4 -o outputs/game1 --tags tags.json --court-points points.json
-  python -m nextrun_cv detect game.mp4 -o outputs/game1
-  python -m nextrun_cv calibrate game.mp4 -o outputs/game1 --court-method lines
-  python -m nextrun_cv run game.mp4 -o outputs/game2 --venue trackid3x3_outdoor   # saved camera profile
-  python -m nextrun_cv analyze -o outputs/game1 --tags outputs/game1/tags.json
-  python -m nextrun_cv render game.mp4 -o outputs/game1
+  python -m nextrun_cv run game.mp4 -o results/games/game1 --tags tags.json --court-points points.json
+  python -m nextrun_cv detect game.mp4 -o results/games/game1
+  python -m nextrun_cv calibrate game.mp4 -o results/games/game1 --court-method lines
+  python -m nextrun_cv run game.mp4 -o results/games/game2 --venue trackid3x3_outdoor   # saved camera profile
+  python -m nextrun_cv analyze -o results/games/game1 --tags results/games/game1/tags.json
+  python -m nextrun_cv render game.mp4 -o results/games/game1
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ def main(argv=None) -> None:
     ap.add_argument("--court", choices=["fiba", "nba", "ncaa", "highschool"])
     ap.add_argument("--court-method", choices=["auto", "keypoints", "lines", "manual"])
     ap.add_argument("--court-points", help="JSON {landmark: [u, v]} for manual calibration")
-    ap.add_argument("--venue", help="saved camera profile in venues/ (court type + calibration points)")
+    ap.add_argument("--venue", help="saved camera profile in data/venues/ (court type + calibration points)")
     ap.add_argument("--stride", type=int)
     ap.add_argument("--max-frames", type=int)
     ap.add_argument("--device")

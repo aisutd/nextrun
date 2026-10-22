@@ -1,0 +1,49 @@
+{
+  "court": "fiba",
+  "image_size": [
+    1280,
+    720
+  ],
+  "points": {
+    "R_base_top": [
+      510,
+      346
+    ],
+    "R_c3_base_top": [
+      537,
+      349
+    ],
+    "R_paint_base_top": [
+      673,
+      365
+    ],
+    "R_paint_base_bot": [
+      878,
+      389
+    ],
+    "R_c3_base_bot": [
+      1117,
+      415
+    ],
+    "R_base_bot": [
+      1182,
+      423
+    ],
+    "R_paint_ft_top": [
+      479,
+      421
+    ],
+    "R_paint_ft_bot": [
+      711,
+      464
+    ]
+  },
+  "notes": "TrackID3x3 indoor gym, 3x3 half court in blue lines (fixed Sony HDR-CX680, side/elevated). Points from the dataset's court registration (ground_truth/Indoor/court_keypoints, keys 1-8); homography residual <= 6 cm.",
+  "play_area": [
+    4.35,
+    14.0,
+    -7.5,
+    7.5
+  ],
+  "off_court_margin_m": 0.5
+}

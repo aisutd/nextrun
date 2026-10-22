@@ -1,0 +1,78 @@
+{
+  "court": "fiba",
+  "image_size": [
+    3840,
+    2160
+  ],
+  "points": {
+    "R_base_top": [
+      1234,
+      1161
+    ],
+    "R_c3_base_top": [
+      1334,
+      1161
+    ],
+    "R_paint_base_top": [
+      1722,
+      1161
+    ],
+    "R_paint_base_bot": [
+      2174,
+      1161
+    ],
+    "R_c3_base_bot": [
+      2582,
+      1161
+    ],
+    "R_base_bot": [
+      2646,
+      1161
+    ],
+    "R_paint_ft_top": [
+      1671.5,
+      1334.5
+    ],
+    "R_paint_ft_bot": [
+      2248.5,
+      1334.5
+    ],
+    "R_ft_center": [
+      1960,
+      1334.5
+    ],
+    "R_arc_top": [
+      1960,
+      1445
+    ],
+    "mid_top": [
+      552.5,
+      1832.5
+    ],
+    "mid_bot": [
+      3412.5,
+      1824
+    ],
+    "center_top": [
+      1650,
+      1835
+    ],
+    "center": [
+      1995,
+      1834
+    ],
+    "center_bot": [
+      2340,
+      1833
+    ]
+  },
+  "fixed_camera": false,
+  "notes": "TrackID3x3 drone footage: outdoor public court complex (full FIBA court, game in the far half), DJI Air 2S hovering high behind the near half. Points picked by hand on frame 300 of 1-1.mov (FIBA fit: median 4 cm, max 13 cm). The drone drifts, so this profile is for building court training / test data (src/scripts/build_court_dataset.py follows the camera); the video pipeline needs a fixed camera.",
+  "play_area": [
+    0.0,
+    14.0,
+    -7.5,
+    7.5
+  ],
+  "off_court_margin_m": 0.5
+}

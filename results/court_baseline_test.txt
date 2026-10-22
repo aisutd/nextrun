@@ -1,0 +1,10 @@
+== models/court_model.pt
+nba_court_kp                         nba        found 63/94  error ft median 6.56  mean 16.66  p90 34.97
+venue_trackid3x3_drone               fiba       found 22/42  error ft median 73.83  mean 69.47  p90 89.82
+venue_trackid3x3_indoor              fiba       found 0/1  error ft median nan  mean nan  p90 nan
+venue_trackid3x3_outdoor             fiba       found 9/22  error ft median 19.19  mean 23.61  p90 29.82
+== results/runs/court/court24_cpu/weights/best.pt
+nba_court_kp                         nba        found 93/94  error ft median 0.9  mean 1.14  p90 2.05
+venue_trackid3x3_drone               fiba       found 0/42  error ft median nan  mean nan  p90 nan
+venue_trackid3x3_indoor              fiba       found 0/1  error ft median nan  mean nan  p90 nan
+venue_trackid3x3_outdoor             fiba       found 22/22  error ft median 31.25  mean 30.92  p90 44.57

@@ -12,7 +12,7 @@ Ground truth (labels/<clip>.json):
 }
 Label with any video player that shows timestamps; ±tolerance seconds is allowed when matching.
 
-Usage: python scripts/score_events.py outputs/game1/events.json labels/game1.json [--tol 0.5]
+Usage: python src/scripts/score_events.py results/games/game1/events.json labels/game1.json [--tol 0.5]
 """
 from __future__ import annotations
 

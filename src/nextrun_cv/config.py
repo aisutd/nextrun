@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]  # src/nextrun_cv/config.py -> repo
 
 
 @dataclass
@@ -49,8 +49,8 @@ class ModelConfig:
     # pose model: person boxes + 17 COCO keypoints (auto-downloaded on first use)
     player_weights: str = str(REPO_ROOT / "models" / "yolo11m-pose.pt")
     court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_model.pt")
-    court_keypoint_config: str = str(REPO_ROOT / "configs" / "court_keypoints.json")
-    tracker_cfg: str = str(REPO_ROOT / "configs" / "botsort_reid.yaml")
+    court_keypoint_config: str = str(REPO_ROOT / "models" / "court_keypoints.json")
+    tracker_cfg: str = str(REPO_ROOT / "models" / "botsort_reid.yaml")
     device: str | None = None  # None -> ultralytics picks cuda if available
     player_conf: float = 0.35
     ball_conf: float = 0.25

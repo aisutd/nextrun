@@ -2,7 +2,7 @@
 
 YOLO11s-pose, one "court" instance with 24 keypoints, trained on high-school gym footage from corner and
 sideline cameras. Weights: models/court_model.pt. Keypoint court positions + 3PT geometry:
-configs/court_keypoints.json (feet, measured from the training labels). Visible keypoints -> RANSAC
+models/court_keypoints.json (feet, measured from the training labels). Visible keypoints -> RANSAC
 homography -> court meters in the pipeline frame (origin center court, +x toward the right basket).
 
 Keypoint ids (left basket / right basket):

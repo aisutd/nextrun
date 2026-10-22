@@ -1,6 +1,6 @@
 """Venue profiles: calibrate a fixed camera once, reuse it for every game filmed from it.
 
-venues/<name>.json
+data/venues/<name>.json
     {"court": "fiba", "image_size": [3840, 2160], "points": {"R_base_top": [988, 1224], ...},
      "play_area": [3.0, 14.0, -7.5, 7.5], "off_court_margin_m": 0.5, "notes": "..."}
 
@@ -18,7 +18,7 @@ from pathlib import Path
 
 from ..config import REPO_ROOT, CourtSpec
 
-VENUES_DIR = REPO_ROOT / "venues"
+VENUES_DIR = REPO_ROOT / "data" / "venues"
 
 
 def venue_path(name: str) -> Path:

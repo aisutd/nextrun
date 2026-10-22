@@ -1,11 +1,11 @@
 """Build one court-keypoint training set in the court model's 24-point format from every source available.
 
-  python scripts/build_court_dataset.py --out data/court24 \
+  python src/scripts/build_court_dataset.py --out data/court24 \
       --roboflow WORKSPACE/PROJECT[/VERSION] ...        # 24-point YOLO-pose sets (Rishabh's); ROBOFLOW_API_KEY
       --yolo-dir PATH ...                                # same, from a local export
       --nba-hf                                           # public NBA broadcast set (850 frames, CC BY 4.0, Hugging Face)
       --landmarks-dir PATH --landmarks-court nba         # any set labelled with template landmarks
-      --venue trackid3x3_outdoor data/videos/outdoor.mp4 --every 30   # calibrated fixed camera
+      --venue trackid3x3_outdoor 'data/videos/outdoor*.mp4' --every 30   # calibrated fixed camera(s)
 
 Every non-24-point source is converted the same way: fit the image->court homography, then project the
 24 keypoints (positions for that court type, court.keypoints.keypoints_for_court). Splits are by group
@@ -16,6 +16,7 @@ for per-domain evaluation).
 from __future__ import annotations
 
 import argparse
+import glob
 import sys
 from pathlib import Path
 
@@ -31,10 +32,10 @@ from nextrun_cv.court.base import CourtNotFound, homography_from_landmarks  # no
 from nextrun_cv.court.keypoints import keypoints_for_court, load_keypoint_config  # noqa: E402
 from nextrun_cv.court.venues import load_venue  # noqa: E402
 from nextrun_cv.datasets import (  # noqa: E402
-    YoloWriter, iter_yolo_export, pose_label, project_keypoints, read_data_yaml, roboflow_download, source_group,
+    YoloWriter, camera_shift, iter_yolo_export, refine_to_court_lines, pose_label, project_keypoints, read_data_yaml, roboflow_download, source_group,
 )
 
-KP_CONFIG = REPO_ROOT / "configs" / "court_keypoints.json"
+KP_CONFIG = REPO_ROOT / "models" / "court_keypoints.json"
 N_KP = 24
 
 
@@ -136,25 +137,76 @@ def add_nba_hf(writer: YoloWriter, raw: Path) -> None:
     print(f"nba_hf: skipped {skipped} images without a usable homography")
 
 
-def add_venue_video(writer: YoloWriter, venue: str, video: str, every: int, source: str) -> None:
-    cap = cv2.VideoCapture(video)
-    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    spec, pts = load_venue(venue, (w, h))
-    H = homography_from_landmarks(pts, spec, "venue", ransac_px=6).H
-    line = labels_from_homography(H, spec, w, h)
-    # one camera = one group would put the whole venue in a single split; use ~1-minute blocks instead
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30
-    for i in range(0, n, every):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, i)
-        ok, frame = cap.read()
+def add_venue_video(writer: YoloWriter, venue: str, videos: list[str], every: int, source: str,
+                    ref_frame: int = 0, split: str | None = None, min_ecc: float = 0.5) -> None:
+    """Frames of a calibrated camera's videos, labelled through the venue's homography. The venue points were
+    picked on `ref_frame` of the first video; every other video is registered to it (camera_shift), so a camera
+    nudged between recordings still gets correct labels.
+    Moving cameras (venue "fixed_camera": false, e.g. a hovering drone) are followed frame to frame: background
+    features give each sampled frame's motion, then the homography is snapped onto the painted court lines
+    (refine_to_court_lines) so errors don't accumulate; frames where the snap fails (ECC < min_ecc) are skipped."""
+    import json
+
+    from nextrun_cv.court.venues import venue_path
+
+    moving = not json.loads(venue_path(venue).read_text()).get("fixed_camera", True)
+    ref = None
+    for video in videos:
+        cap = cv2.VideoCapture(video)
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        spec, pts = load_venue(venue, (w, h))
+        start = ref_frame if ref is None else 0
+        cap.set(cv2.CAP_PROP_POS_FRAMES, start)
+        ok, first = cap.read()
         if not ok:
-            break
-        if max(w, h) > 1920:  # keep the dataset light; the model trains at <= 1280 anyway
-            s = 1920 / max(w, h)
-            frame = cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
-        block = int(i / fps // 60)
-        writer.add(source, f"{Path(video).stem}_min{block}", f"{Path(video).stem}_{i:06d}", frame, [line])
+            print(f"{video}: unreadable, skipped")
+            continue
+        H_c2i = np.linalg.inv(homography_from_landmarks(pts, spec, "venue", ransac_px=6).H)
+        if ref is None:
+            ref, shift = first, 0.0
+        else:
+            Hs, inliers = camera_shift(ref, first)
+            if Hs is None or inliers < 100 or ref.shape != first.shape:
+                print(f"{video}: can't register to the reference video ({inliers} inliers), skipped")
+                continue
+            names = list(pts)
+            moved = cv2.perspectiveTransform(np.array([[pts[k] for k in names]], float), Hs)[0]
+            shift = float(np.median(np.hypot(*(moved - np.array([pts[k] for k in names])).T)))
+            H_c2i = Hs @ H_c2i
+        if moving:
+            H_c2i, cc = refine_to_court_lines(H_c2i, first, spec)
+            if cc < min_ecc:
+                print(f"{video}: court lines not found on the first frame (ECC {cc:.2f}), skipped")
+                continue
+        # one camera = one group would put the whole venue in a single split; use ~1-minute blocks instead
+        fps = cap.get(cv2.CAP_PROP_FPS) or 30
+        added = skipped = 0
+        prev = first
+        for i in range(start, n, every):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, i)
+            ok, frame = cap.read()
+            if not ok:
+                break
+            if moving and i != start:
+                Hs, _ = camera_shift(prev, frame)
+                H_new, cc = refine_to_court_lines(Hs @ H_c2i if Hs is not None else H_c2i, frame, spec)
+                prev = frame
+                if cc < min_ecc:
+                    skipped += 1
+                    continue
+                H_c2i = H_new
+            line = labels_from_homography(np.linalg.inv(H_c2i), spec, w, h)
+            if line is None:
+                skipped += 1
+                continue
+            if max(w, h) > 1920:  # keep the dataset light; the model trains at <= 1280 anyway
+                s = 1920 / max(w, h)
+                frame = cv2.resize(frame, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+            block = int(i / fps // 60)
+            writer.add(source, f"{Path(video).stem}_min{block}", f"{Path(video).stem}_{i:06d}", frame, [line], split)
+            added += 1
+        print(f"{source} {Path(video).name}: {added} frames ({skipped} skipped), camera shift {shift:.1f} px")
 
 
 def main() -> None:
@@ -165,7 +217,11 @@ def main() -> None:
     ap.add_argument("--nba-hf", action="store_true", help="public NBA broadcast court set (Hugging Face)")
     ap.add_argument("--landmarks-dir", nargs="*", default=[], help="template-landmark labelled sets")
     ap.add_argument("--landmarks-court", default="nba", choices=["nba", "fiba", "ncaa", "highschool"])
-    ap.add_argument("--venue", nargs=2, action="append", default=[], metavar=("NAME", "VIDEO"))
+    ap.add_argument("--venue", nargs=2, action="append", default=[], metavar=("NAME", "VIDEOS"),
+                    help="venue profile + comma-separated video paths / globs (first video = the one the points were picked on)")
+    ap.add_argument("--venue-ref-frame", nargs=2, action="append", default=[], metavar=("NAME", "FRAME"),
+                    help="frame of the venue's first video the points were picked on (default 0)")
+    ap.add_argument("--test-venue", nargs="*", default=[], help="venues used only as test images (unseen-court check)")
     ap.add_argument("--every", type=int, default=30, help="venue videos: one frame every N")
     a = ap.parse_args()
 
@@ -180,8 +236,13 @@ def main() -> None:
         add_nba_hf(writer, REPO_ROOT / "data" / "raw")
     for d in a.landmarks_dir:
         add_landmark_set(writer, Path(d), CourtSpec.preset(a.landmarks_court), f"{a.landmarks_court}_" + Path(d).name)
-    for name, video in a.venue:
-        add_venue_video(writer, name, video, a.every, "venue_" + name)
+    for name, videos in a.venue:
+        paths = []
+        for part in videos.split(","):
+            paths += [q for q in (sorted(glob.glob(part)) if any(c in part for c in "*?[") else [part]) if q not in paths]
+        ref_frame = dict((n, int(f)) for n, f in a.venue_ref_frame).get(name, 0)
+        add_venue_video(writer, name, paths, a.every, "venue_" + name, ref_frame,
+                        "test" if name in a.test_venue else None)
     writer.write_lists()
 
     kp = load_keypoint_config(KP_CONFIG)

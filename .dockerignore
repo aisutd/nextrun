@@ -1,9 +1,10 @@
 .git
 .venv
-data
-runs
-outputs
-notebooks
+data/*
+!data/venues
+results
+src/notebooks
+src/scripts
 tests
 **/__pycache__
 *.egg-info

@@ -112,7 +112,7 @@ def test_lines_auto_from_scratch():
     assert _court_error(calib, Hc2i) < 0.5
 
 
-KP_CONFIG = REPO_ROOT / "configs" / "court_keypoints.json"
+KP_CONFIG = REPO_ROOT / "models" / "court_keypoints.json"
 
 
 def test_keypoint_config_matches_highschool_court():

@@ -35,7 +35,7 @@ def _fake_calibrate(video, out_dir, cfg, manual_points=None, venue=None):
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    from backend import app as api
+    from nextrun_cv import api
 
     monkeypatch.setattr(api, "DATA_DIR", tmp_path)
     monkeypatch.setattr(pipeline, "detect", _fake_detect)
@@ -72,7 +72,7 @@ def test_analyze_frame(client, monkeypatch):
     import cv2
     import numpy as np
 
-    from backend import app as api
+    from nextrun_cv import api
 
     class FakeNextRun:
         def analyze_image(self, img):

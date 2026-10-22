@@ -1,11 +1,11 @@
-"""Court model accuracy per source/domain on a court24 dataset (scripts/build_court_dataset.py).
+"""Court model accuracy per source/domain on a court24 dataset (src/scripts/build_court_dataset.py).
 
-  python scripts/eval_court.py --data data/court24 --split test [--weights models/court_model.pt] [--court nba]
+  python src/scripts/eval_court.py --data data/court24 --split test [--weights models/court_model.pt] [--court nba]
 
 For each image: run the court model (KeypointCourtEstimator, incl. RANSAC + left/right fix) and map every
 labelled keypoint through the predicted homography; error = distance to that keypoint's true court position.
 Reports per source: court found rate and median / mean / p90 mapping error in feet (same metric as
-docs/court_detection.md). `--court` sets the court geometry; by default it is inferred from the source name
+models/README.md). `--court` sets the court geometry; by default it is inferred from the source name
 (nba_* -> nba, venue_* -> the venue's court, otherwise highschool).
 """
 from __future__ import annotations

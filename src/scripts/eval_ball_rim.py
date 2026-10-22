@@ -1,6 +1,6 @@
-"""Ball+rim model accuracy per source/domain on a ball_rim dataset (scripts/build_ball_rim_dataset.py).
+"""Ball+rim model accuracy per source/domain on a ball_rim dataset (src/scripts/build_ball_rim_dataset.py).
 
-  python scripts/eval_ball_rim.py --data data/ball_rim [--weights models/ball_hoop_model.pt] [--split test]
+  python src/scripts/eval_ball_rim.py --data data/ball_rim [--weights models/ball_hoop_model.pt] [--split test]
 
 Per source: precision, recall and mAP50 for ball and rim separately (ball recall is what limits shots,
 makes and rebounds). Uses the per-source image lists the builder writes to data/ball_rim/lists/.
@@ -34,7 +34,7 @@ def main() -> None:
     if {int(k): str(v).lower() for k, v in model.names.items()} != {0: "ball", 1: "rim"}:
         raise SystemExit(f"{a.weights}: classes {model.names}, expected {{0: ball, 1: rim}}")
     report = {}
-    for lst in sorted((Path(a.data) / "lists").glob(f"*_{a.split}.txt")):
+    for lst in sorted((Path(a.data).resolve() / "lists").glob(f"*_{a.split}.txt")):
         src = lst.name[: -len(f"_{a.split}.txt")]
         with tempfile.TemporaryDirectory() as td:
             y = Path(td) / "data.yaml"

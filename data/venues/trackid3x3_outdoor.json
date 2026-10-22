@@ -1,0 +1,53 @@
+{
+  "court": "fiba",
+  "image_size": [
+    3840,
+    2160
+  ],
+  "points": {
+    "R_paint_base_top": [
+      1514,
+      1222
+    ],
+    "R_paint_base_bot": [
+      2110,
+      1200
+    ],
+    "R_paint_ft_top": [
+      1494,
+      1440
+    ],
+    "R_paint_ft_bot": [
+      2294,
+      1400
+    ],
+    "R_arc_top": [
+      1944,
+      1580
+    ],
+    "R_c3_base_top": [
+      988,
+      1224
+    ],
+    "R_c3_base_bot": [
+      2580,
+      1178
+    ],
+    "R_base_top": [
+      876,
+      1238
+    ],
+    "R_base_bot": [
+      2699,
+      1172
+    ]
+  },
+  "notes": "TrackID3x3 outdoor 3x3 half court (fixed iPhone, elevated behind the top of the key). Paint / arc points picked by hand on frame 900 of the sample video; court corners from the dataset's registration (RKU0 / RKU10); the far corners (RKU1 / RKU11) land within 0.35 m of the 11 m line. Earlier versions labelled the corner-3 / baseline points as the court corners (0.9 m off).",
+  "play_area": [
+    3.0,
+    14.0,
+    -7.5,
+    7.5
+  ],
+  "off_court_margin_m": 0.5
+}

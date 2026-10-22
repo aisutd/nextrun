@@ -1,9 +1,9 @@
 """NextRun FastAPI backend: upload a game video, run the CV pipeline in the background, then tag players
 and read back the box score (PTS / REB / AST first).
 
-  uvicorn backend.app:app --reload          # http://localhost:8000/docs
+  uvicorn nextrun_cv.api:app --reload          # http://localhost:8000/docs
 
-Each game lives in $NEXTRUN_DATA/<game_id>/ (default outputs/) with the pipeline's files plus
+Each game lives in $NEXTRUN_DATA/<game_id>/ (default results/games/) with the pipeline's files plus
 status.json, so state survives restarts. Processing runs in-process (BackgroundTasks); swap in a
 real queue (Celery / RQ / Cloud Run jobs) once uploads need a GPU worker.
 """
@@ -30,7 +30,7 @@ from nextrun_cv.court.venues import apply_venue, list_venues, load_venue
 from nextrun_cv.stats.boxscore import HEADLINE, team_totals
 
 log = logging.getLogger("nextrun.api")
-DATA_DIR = Path(os.environ.get("NEXTRUN_DATA", REPO_ROOT / "outputs"))
+DATA_DIR = Path(os.environ.get("NEXTRUN_DATA", REPO_ROOT / "results" / "games"))
 COURTS = Literal["highschool", "fiba", "nba", "ncaa"]
 Status = Literal["queued", "detecting", "calibrating", "analyzing", "done", "failed"]
 
@@ -101,7 +101,7 @@ def process_game(game_id: str) -> None:
 # --- routes ------------------------------------------------------------------------------------------
 @app.get("/venues")
 def venues() -> list[str]:
-    """Saved camera profiles (venues/*.json)."""
+    """Saved camera profiles (data/venues/*.json)."""
     return list_venues()
 
 

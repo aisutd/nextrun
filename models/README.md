@@ -4,7 +4,7 @@ Finds basketball court keypoints in a camera frame, maps image pixels to real co
 positions in feet (homography), draws the 3-point lines, and classifies positions as 2PT / 3PT.
 
 > Merged into the main pipeline on `model_merge`: weights are `models/court_model.pt`, keypoint
-> positions are `configs/court_keypoints.json`, and the detector lives in `nextrun_cv/court/keypoints.py`
+> positions are `models/court_keypoints.json`, and the detector lives in `src/nextrun_cv/court/keypoints.py`
 > (court feet are converted to the pipeline's meters, origin at center court). Original standalone
 > code + demo: `court-detection` branch / PR #2.
 
@@ -19,7 +19,7 @@ positions in feet (homography), draws the 3-point lines, and classifies position
     template.three_line_distance((x_m, y_m), cfg.court)   # + outside (3PT) / - inside (2PT), meters
 
 ## Court coordinates
-In `configs/court_keypoints.json`: x = across the court (0 = far sideline, 50 = near sideline), y = along the court
+In `models/court_keypoints.json`: x = across the court (0 = far sideline, 50 = near sideline), y = along the court
 (0 = left baseline, 84 = right baseline). High-school court, 84 x 50 ft.
 Positions were measured from the training labels, using the paint (12 ft wide, free-throw line at 19 ft) as reference.
 

@@ -4,4 +4,4 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./outputs:/app/outputs
+      - ./results/games:/app/results/games
