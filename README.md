@@ -15,7 +15,7 @@ Three models, run as one unit (`nextrun_cv.integration.NextRun`):
 
 | Model | File | Gives us |
 |---|---|---|
-| Player pose + tracking | `models/yolo11m-pose.pt` + BoT-SORT (auto-downloaded) | who is where, hands, feet |
+| Player pose + tracking | `models/yolo26m-pose.pt` + BoT-SORT (auto-downloaded) | who is where, hands, feet |
 | Ball + rim | `models/ball_hoop_model.pt` (YOLOv8n) | ball path, rim position |
 | Court keypoints | `models/court_model.pt` (YOLO11s-pose, 24 points) | image ↔ court position in feet |
 
@@ -74,7 +74,7 @@ src/
                     eval_ball_rim.py, score_events.py (event precision/recall vs hand labels)
   notebooks/        NextRun_Pipeline.ipynb (run a game), NextRun_Train.ipynb (retrain models): Colab, GPU
 models/           ball_hoop_model.pt, court_model.pt, court_keypoints.json (court model geometry),
-                  botsort_reid.yaml (tracker), README.md (court model notes); yolo11m-pose.pt downloads here
+                  botsort_reid.yaml (tracker), README.md (court model notes); yolo26m-pose.pt downloads here
 data/             venues/ (saved camera calibrations, tracked); datasets, raw downloads, videos (local only)
 tests/            synthetic games for every event type + API + dataset tooling (no GPU needed)
 results/          eval reports (tracked); runs/ (training runs) and games/ (processed games) stay local

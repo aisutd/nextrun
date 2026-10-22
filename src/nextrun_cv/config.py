@@ -47,7 +47,7 @@ class CourtSpec:
 class ModelConfig:
     ball_hoop_weights: str = str(REPO_ROOT / "models" / "ball_hoop_model.pt")
     # pose model: person boxes + 17 COCO keypoints (auto-downloaded on first use)
-    player_weights: str = str(REPO_ROOT / "models" / "yolo11m-pose.pt")
+    player_weights: str = str(REPO_ROOT / "models" / "yolo26m-pose.pt")
     court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_model.pt")
     court_keypoint_config: str = str(REPO_ROOT / "models" / "court_keypoints.json")
     tracker_cfg: str = str(REPO_ROOT / "models" / "botsort_reid.yaml")
