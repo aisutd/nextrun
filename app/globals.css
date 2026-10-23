@@ -1,0 +1,27 @@
+@import "tailwindcss";
+@import "@fontsource/montserrat/800-italic.css";
+@import "@fontsource/montserrat/600.css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/600.css";
+@import "@fontsource/jetbrains-mono/700.css";
+
+@import "@fontsource/bebas-neue/400.css";
+@import "@fontsource/orbitron/600.css";
+@import "@fontsource/rajdhani/600.css";
+@import "@fontsource/oswald/600.css";
+@import "@fontsource/russo-one/400.css";
+@import "@fontsource/playfair-display/600.css";
+
+@theme {
+  --font-sans: "Inter", sans-serif;
+  --font-display: "Montserrat", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+  --color-blaze: #ff6a00;
+  --color-muted: #9ca3af;
+}
+body { margin: 0; background: white; }
+button:focus-visible, a:focus-visible { outline: 2px solid white; outline-offset: 4px; }
