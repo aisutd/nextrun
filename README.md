@@ -1,143 +1,24 @@
 # NextRun
 
-Next.js App Router, strict TypeScript, and Tailwind CSS implementation of thirty-five Figma screens. Exact Montserrat, Inter, and JetBrains Mono font families are supplied locally through Fontsource. Original Figma artwork and icons are local SVG files.
+## Description
 
-## Run
+NextRun is a computer-vision-driven statistics tracker and community platform for recreational pickup basketball. Players and clubs can upload game footage, automatically track performance metrics, and maintain collectible player cards that evolve through games and challenges.
 
-```sh
-npm ci
-npm run dev
+## Planned Technologies
+
+- Python, JavaScript/TypeScript, and PostgreSQL
+- React Native
+- FastAPI
+- PyTorch, Ultralytics YOLO, OpenCV, and scikit-learn
+
+## Docker Setup
+
+Make sure Docker Desktop is installed and running.
+
+```bash
+docker compose up -d
+docker compose down
+docker compose ps
 ```
 
-Open http://localhost:3000. Production: `npm run build` then `npm start`.
-
-## Routes
-
-| Route | Figma frame | Screen |
-| --- | --- | --- |
-| `/` | `3345:2937` | Welcome |
-| `/onboarding/2` | `3345:3074` | Analyze. Improve. Connect. |
-| `/onboarding/3` | `3345:3146` | Better Players Build Stronger Communities |
-| `/player/handle` | `3345:3308` | Create your player handle |
-| `/player/face-scan` | `3345:3347` | Face scan, completed state |
-| `/player/clubs` | `3345:3451` | Find local clubs |
-| `/player/recording-tutorial` | `3345:3526` | How to record — Stand back |
-| `/home` | `3345:3574` | Home dashboard |
-| `/home/light` | `3347:823` | Light Home dashboard |
-| `/club/leaderboard` | `3345:3846` | Club leaderboard |
-| `/club/leaderboard/light` | `3347:71` | Light Club leaderboard |
-| `/club/activity` | `3345:4127` | Club activity |
-| `/club/activity/light` | `3347:502` | Light Club activity |
-| `/club/tournaments` | `3345:4348` | Club tournaments |
-| `/club/tournaments/light` | `3347:1063` | Light Club tournaments |
-| `/club/setup` | `3345:4533` | Club setup |
-| `/club/setup/light` | `3347:1955` | Light Club setup |
-| `/camera/live` | `3345:4818` | Camera live |
-| `/camera/live/light` | `3347:2689` | Light Camera live |
-| `/camera/upload` | `3345:5048` | Camera upload |
-| `/camera/upload/light` | `3347:2262` | Light Camera upload |
-| `/camera/library` | `3345:5185` | Camera library |
-| `/camera/library/light` | `3347:1893` | Light Camera library |
-| `/friends/active` | `3345:5250` | Friends active |
-| `/friends/active/light` | `3347:1283` | Light Friends active |
-| `/friends/messages` | `3345:5436` | Friends messages |
-| `/friends/messages/light` | `3347:2909` | Light Friends messages |
-| `/friends/rivalry` | `3345:5564` | Friends rivalry |
-| `/friends/rivalry/light` | `3347:3146` | Light Friends rivalry |
-| `/profile` | `3345:5698` | Profile |
-| `/profile/light` | `3347:1459` | Light Profile |
-| `/profile/custom-card` | `3345:5920` | Custom player card |
-| `/profile/custom-card/light` | `3347:1680` | Light custom player card |
-| `/settings` | `3345:6167` | Settings |
-| `/settings/light` | `3347:2555` | Light Settings |
-
-## Shared components
-
-- `ScreenShell`: 390 × 844 frame, original background artwork, border, shadow, and glow layers.
-- `Brand`: NextRun wordmark and original runner icon.
-- `AuthButton`: provider controls with measured screen-specific sizing; the three controls on Onboarding 3 navigate to `/player/handle` as defined in Figma.
-- `PrimaryButton` and `PrimaryLink`: shared orange action styling for button and navigation semantics; style tokens also supply the email control.
-- `ProgressDots`: shared progress indicator supporting the five-step onboarding flow and three-step recording tutorial.
-- `ProgressBar`: accessible gradient progress indicator.
-- `FaceScanScreen`: composes the supplied completed-scan design using the shared shell and controls.
-- `SurfaceCard`: shared dark gradient surface, measured border and overlay shadow used by club and tutorial cards.
-- `RecordingTutorialScreen`: original court diagram, instructions, three-step indicator and Next control.
-- `ClubListCard`: reusable data-driven club list card with the exact Figma typography, rows, border and badges.
-- `FindClubsScreen`: court background, club card, Continue and step 4 indicator.
-- `WelcomeScreen`: composes the three introductory variants.
-- `PlayerHandleForm`: client component for handle input, format validation, and temporary session draft storage.
-
-- `DashboardNavigation`: reusable five-item navigation with the original icons and raised recording control.
-- `DashboardProgressCard` and `DashboardChallenges`: compose shared surfaces and progress indicators using the measured dashboard data.
-
-## Behavior and remaining integration
-
-Welcome and Onboarding 2 have no prototype reactions. Slide controls reproduce their selected states; no slide interactions are defined in these frames.
-
-Player Handle allows 3–16 ASCII letters, numbers, or underscores. Continue is disabled until the format is valid. Submitting retains a draft in `sessionStorage` under `nextrun.playerHandleDraft`. This does not register or permanently reserve a handle, check uniqueness, or create an account. Continue follows the Figma destination `3345:3347` to `/player/face-scan` while preserving the draft.
-
-Face Scan reproduces the supplied completed state, including the static “Face saved” copy. It does not access the camera, capture images, save biometric data, or perform face recognition. Its Continue action navigates to `/player/clubs` as mapped by Figma destination `3345:3451`.
-
-Find Clubs displays the three clubs and distances supplied in Figma. These are static design data, not a live location lookup. JOIN is a badge with no prototype action; membership and geolocation integrations are not implemented. Continue follows Figma destination `3345:3526` to `/player/recording-tutorial`.
-
-Recording Tutorial reproduces the first “Stand back” slide. The card has no swipe or tap prototype action; no extra slides are invented. Next follows Figma destination `3345:3574` to `/home`.
-
-Home reproduces the supplied Jordan dashboard with static statistics and challenge values. Content scrolls beneath the fixed bottom navigation to expose the challenges below the initial frame. Start Session and Record navigate to `/camera/live`. Friends navigates to `/friends/active`. Profile navigates to `/profile`. Notifications has no prototype reaction.
-
-Club Leaderboard uses the original club artwork, win ring, and player avatars. Shared navigation accepts the active screen and connects Home with Club Hub. `ClubLeaderboard` composes the measured ranking and statistics; `ClubFeed` supplies the matching feed and comment form. Posted comments are held only in page memory and disappear on reload. All four club tabs navigate between their implemented screens. Club data are static Figma values.
-
-Club Activity composes the shared `ClubHeader`, `ClubTabs`, `ClubFeed`, `SurfaceCard`, and navigation. Its two recent activity rows use original Figma icons; the feed enables the exact 38px avatar exports. Per-screen tab offsets are preserved. Comments remain local to the page. The fire emoji remains the original Unicode character and depends on an installed emoji font; the isolated QA browser lacks one.
-
-`ClubTournaments` composes the shared club header, tabs, surface card, and bottom navigation. It displays the supplied Summer Showdown schedule as static data; the three schedule rows have no prototype reactions. The measured first-row height is 48px, the remaining rows are 46px, and the parent card is 231px. The shared tabs preserve the Tournaments frame offsets and active state.
-
-`ClubSetup` reuses the shared club header, tabs, card surface, button and navigation. `ClubSetupForm` supplies editable name and school fields, native color controls, and local video selection with drag-and-drop. Create club saves a draft in `sessionStorage` under `nextrun.clubDraft`; it does not register a club with a service. Selected video names are shown locally; no video is uploaded or analyzed. Scrolling exposes Choose video below the original navigation overlay.
-
-`CameraLive` uses the original court artwork and alignment guide, exact corner strokes, two selector rows and active recording navigation variant. `CameraRoster` is a reusable local team selector initialized with PlayerOne in A, Hooper23 in B, and three unassigned players; counts update when assignments change. Session mode is local state. The screen reproduces the static supplied preview and does not open a camera, record video, recognize players, or analyze footage. Live, Upload, and Library tabs are connected.
-
-`CameraUpload` composes shared `CameraHeader`, `CameraTabs`, `VideoUploadCard`, and recording navigation. `VideoUploadCard` is also reused in Club Setup, with its original screen-specific artwork. Choosing or dropping a video displays its filename locally; invalid file types show feedback. No file bytes are uploaded and no analysis is performed. The original 324 × 190 illustration, 318.84px card, and Upload tab offsets are preserved.
-
-`CameraLibrary` reuses the camera header, tabs, screen shell and active recording navigation. `CameraProcessingQueue` composes the shared surface and progress bars with the supplied filenames and 64%/18% values. These are static Figma data; no background processing is simulated or performed.
-
-`FriendsActive` reuses `ScreenShell`, `SurfaceCard`, and `DashboardNavigation`. Its small data-driven `FriendPresenceCard` renders the six original players, exact avatar export, and presence colors. Search and All/Online/Offline/Requests filters operate locally on the supplied design data; no live presence or friend service is connected. Messages connects to `/friends/messages`; Rivalry connects to `/friends/rivalry`. The list scrolls beneath the original fixed navigation.
-
-`FriendsMessages` composes the shared `FriendsHeader`, `FriendsSearch`, and `FriendsTabs`, extracted from Friends Active without changing its layout. All three Friends tabs navigate between their implemented screens. The conversation reuses `SurfaceCard` and `PrimaryButton`, with the original 38px Figma avatar export. Send appends trimmed nonempty messages only in page memory and clears the composer; no message is transmitted or retained after navigation/reload. Search filters the supplied Hooper23 conversation.
-
-`FriendsRivalry` reuses the shared Friends header/search/tabs, screen shell, navigation, surface, and progress bar. Its small `RivalryCard` composes the exact 184px head-to-head surface, original 54px avatar exports, 42px Montserrat score, and 64% Figma fill. The 7–4 score, lead and Saturday matchup are static supplied design copy; no match scheduling or live results service is connected. Search filters the supplied Hooper23 rivalry.
-
-`ProfileScreen` reuses `ScreenShell`, `SurfaceCard`, `PrimaryButton`, `ProgressBar`, and `DashboardNavigation`. `PlayerCard` supplies the original 224 × 310 card and tap-to-change alternate variant; `ProfileSectionHeading` shares the measured orange marker and typography. Original court illustration, player silhouette, Settings and active Profile icons are local Figma exports; offscreen achievement icon paths are retrieved directly from Figma. The 190px attributes card, 112px achievements surface, blank Border glow/Title sections, and four activity rows preserve supplied content and offsets. All profile statistics are static design data. Settings navigates to `/settings`. Build a custom card navigates to `/profile/custom-card`. Content scrolls beneath the fixed navigation.
-
-`CustomPlayerCard` reuses the shared player card with its measured reverse variant initially selected, shell, surfaces, action and Profile navigation. `OptionRail` shares exact horizontal selector coordinates, widths, and typography. Identity fields, title presets, style selectors, palettes, custom native colors and Holo shine maintain local form state. The original Bebas Neue, Orbitron, Rajdhani, Oswald, Russo One and Playfair Display fonts are supplied locally through Fontsource. Use as my player card saves `nextrun.customPlayerCardDraft` in session storage and confirms it; it does not publish or apply a server-backed profile. Option controls have no Figma preview reactions; no unprovided shape/design/frame previews are invented. The existing card tap reaction switches its two supplied variants. Back returns to Profile.
-
-`SettingsScreen` reuses the shell, dark surfaces and Profile navigation. `SettingsHeading` shares section typography. The original masked grid and basketball illustration are local Figma exports; the 156px Lab banner, 65px theme card, 147.42px accent card and 132px privacy card preserve desktop measurements. The accent card grows for wrapped copy on narrow screens. Accent and privacy selectors change their supplied component states and save session drafts (`nextrun.accentDraft`, `nextrun.privacyDraft`); they do not apply global themes or server permissions. Light mode connects to `/settings/light` and back, following the Figma theme destinations. Legal text and processing status have no Figma prototype action and remain supplied static content. Delete account reports its missing service integration and deletes no data. Back and Profile Settings links connect both screens.
-
-Light Settings uses the same `SettingsScreen`, `ScreenShell`, `SurfaceCard`, and `DashboardNavigation` with explicit light variants. Its original masked grid, basketball artwork and five navigation icons are local Figma exports. The borderless 390px shell, 358px cards, 163.42px accent surface, 340px option rails, white card shadows, muted #5b6270 text, and initially selected Club visibility are preserved. Theme switching keeps the internal scroll offset. Light versions of other main-navigation destinations are not yet implemented, so those links open their existing screens. The back control returns to `/profile/light`. Accent/privacy remain local drafts; legal copy and upload counts remain static; no account deletion occurs.
-
-Light Custom Player Card reuses `CustomPlayerCard`, `OptionRail`, `PlayerCard`, the light shell, surfaces and navigation. The shared card gains the supplied white inner frame, six outlined reverse panels and holographic overlay. Its 224 × 310 preview, flip hint, 50px Upload selfie action, 358px cards, pale #f2f3f5 inputs and 340px rails preserve the light design. Selfie selection validates image type and shows the local filename; no image bytes are uploaded or analyzed. The filename joins the session draft metadata. No new decorative assets or UI libraries are introduced. Back returns to `/profile/light`.
-
-Light Profile reuses `ProfileScreen`, `PlayerCard`, section headings, surfaces, progress bars and navigation. It adds the original light court and complete sun icon exports, supplied gradient overlay, light progress tracks, white achievement interiors, flip hint and measured 491px custom-card action offset. The 358px white cards preserve all attribute and activity values. Light Profile, Settings and Custom Player Card link to their matching light routes; light navigation Profile links now target `/profile/light`. Other destinations still open their existing implemented screens.
-
-Light Friends Rivalry reuses `FriendsRivalry`, `RivalryCard`, shared Friends header/search/tabs, shell, white surface, light progress bar and navigation. Its original 358px court header, search icon, both 54px avatars, active Friends and inactive Profile icons are local Figma exports. Light tab widths are 105.42/128.14/108.67px, the card remains 184px, and the supplied 7–4 score/64% fill and matchup copy remain static. Search filters Hooper23 locally. Light Profile and Friends navigation connect to each other; All three Friends tabs connect to their matching light screens.
-
-Light Friends Messages reuses `FriendsMessages` with explicit light variants, the shared Friends header/search/tabs, shell, surface, primary action and navigation. The original light 38px avatar is exported from Figma. The 179px conversation surface, 78% incoming bubble, 46px composer, 67.17px Send action, #f2f3f5 fills and measured light shadows are preserved. Light Messages and Rivalry tabs connect to each other; Profile opens `/profile/light`. Search and trimmed nonempty Send remain local page state; messages are not transmitted or retained after reload. No new reusable component was needed.
-
-Light Friends Active reuses `FriendsActive` and `FriendPresenceCard` with explicit light variants, shared header/search/tabs, shell, surfaces and navigation. Its original 46px avatar is exported from Figma. Six 70px cards preserve the 12px gaps, 299px list offset, pale borders, measured shadows, #0a0a0a names and #5b6270 status/offline dots. All/Online/Offline/Requests filters and search operate on static supplied player data; no presence or friend service is connected. All light Friends tabs now stay within light routes, and the light navigation Friends destination opens `/friends/active/light`. No new reusable component was required.
-
-Light Camera Library reuses `CameraLibrary`, `CameraHeader`, `CameraTabs`, `CameraProcessingQueue`, `SurfaceCard`, `ProgressBar` and main navigation with explicit light variants. The original active recording icon is exported from Figma; its orange fill and red/gray rings preserve the supplied active control. The queue retains its 135px height and two static 64%/18% values, with a 126px top offset, #f2f3f5 tracks, white surface and muted #5b6270 copy. Light tab widths are 102.47/120.02/119.73px. All three camera tabs connect to their matching light routes. Profile and Friends open their light routes. No new reusable component was required; no background video processing occurs.
-
-Light Camera Upload reuses `CameraUpload`, `VideoUploadCard`, camera header/tabs, shell, white surface and active recording navigation. The complete original 328 × 190 illustration, including pale gradient and gray hoop, is exported from Figma. The 318.84px card sits at y130, preserving the 37px Choose video action, exact typography, white border/shadow and muted instruction. Shared uploader light variants preserve dark Camera Upload and Club Setup. Native selection and drag/drop show a local filename; invalid types show feedback. No file bytes are uploaded or analyzed. All three light camera tabs connect to each other. No new reusable component was needed.
-
-Light Camera Live reuses `CameraLive`, `CameraRoster`, shared camera header/tabs, shell, white surface and active recording navigation. The original 358 × 238 court artwork, 356 × 236 guide and 34px avatar are Figma exports. Its preview preserves the pale gradient, orange corner strokes, black READY badge and guide caption. The light 318px roster at y417 uses five 54px rows, pale #f2f3f5 selectors, orange A, black B, gray unassigned states and exact text. Session modes and team assignments/counts update locally. All light camera tabs and the light navigation Record destination now use matching light routes. No camera access, recording, player recognition or analysis occurs. No new reusable component was needed.
-
-Light Club Setup reuses `ClubSetup`, `ClubHeader`, `ClubTabs`, `ClubSetupForm`, `VideoUploadCard`, white surface, primary action and navigation. Original light skyline artwork, 84px win ring and active Club Hub icon are Figma exports. The 143px header, exact tab positions, 267px form at y221, pale 46px fields, native color inputs, 50px action and 318.84px uploader preserve the supplied frame. The uploader reuses the matching light illustration from Camera Upload. Create club stores a session draft; video selection shows a local filename. No club registration or upload service is connected. Tournaments connects to its light route; Activity connects to its light route; Leaderboard connects to its light route. No new reusable component was needed.
-
-Light Club Tournaments reuses `ClubTournaments`, the light `ClubHeader`, `ClubTabs`, surface and navigation. The matching skyline, win ring and Club Hub icon reuse original Figma exports. The white 231px Summer Showdown card preserves its 48/46/46px rows, pale #f2f3f5 fills, #e7e8ec borders, #0a0a0a text, orange markers and measured shadows. Light tab offsets are 6/118/200.88/316px. Setup and Tournaments connect to their matching light routes; Activity uses its light route; Leaderboard connects to its light route. The supplied schedule is static and has no Figma row actions. No new reusable component or asset was required.
-
-Light Club Activity reuses `ClubActivity`, `ClubFeed`, light club header/tabs, surfaces, primary action and navigation. Its two 38px activity icons and 38px feed avatar are original Figma exports. The 166px activity card, two 59px rows, 13px card gap, 210px initial feed, pale composer, measured 67.14px Post action and light shadows preserve the frame. Local posting trims nonempty comments, appends them and clears the composer; nothing is transmitted or retained after reload. Activity, Tournaments and Setup link to matching light routes; Leaderboard uses its light route. The original fire emoji remains Unicode and depends on an installed emoji font; the isolated QA browser lacks one. No new reusable component was needed.
-
-Light Club Leaderboard reuses `ClubLeaderboard`, light club header/tabs, surfaces, feed and main navigation. The original 36px light ranking avatar is exported from Figma. Its 333px ranking surface, five 57px rows, four 106px stat cards, original rank glow, pale separators, #0a0a0a values and #5b6270 labels preserve the supplied screen. The feed begins at y824, retaining the original blank gradient avatar variant and local comment behavior. All four light club tabs connect to each other; the light navigation Club Hub destination now opens `/club/leaderboard/light`. Rankings, scores and statistics remain static Figma values. No new reusable component was required.
-
-Light Home Dashboard reuses `HomeDashboard`, `Brand`, `DashboardProgressCard`, `DashboardChallenges`, shell, surfaces and navigation with explicit light variants. Original light hero artwork, bell, runner, shooting ring, session arrow and active Home icon are Figma exports. The 292px hero, 82px session panel, 233px progress card and 151px challenge surface retain measured placement, typography, pale borders and light shadows. The runner preserves its 5px SVG export padding. Light Home navigation links now target `/home/light`; Start session opens `/camera/live/light`. All five light navigation destinations connect to matching light screens. Statistics and challenge values remain static Figma data; Notifications has no supplied prototype action. No new reusable component was needed.
-
-## Validation
-
-Production compilation and strict TypeScript checks pass. Light Home desktop/mobile renders were compared with Figma; browser checks cover original assets, 292px hero, 233px progress card, Start session navigation, light Home/Club/Friends/Profile round trips, challenge scroll access and 60/33/100 values, no mobile horizontal overflow, and dark Home dimensions/Start session regression. Visual review corrected the runner export padding and light session shadow. Light Leaderboard desktop/mobile renders were compared with Figma; browser checks cover original loaded assets, exact 333px card and five 57px rows, all light club tab round trips, Profile/Club Hub navigation, scroll access to local feed posting and no mobile horizontal overflow. Dark Leaderboard card dimensions and Activity navigation pass after sharing the variant. Light Activity desktop/mobile renders were compared with Figma; browser checks cover original local assets, 166px card, two 59px rows, empty/trimmed comment submission and composer clearing, Activity/Tournaments/Setup light round trips, Leaderboard destination and no mobile horizontal overflow. Dark Activity posting and the shared Leaderboard feed pass after sharing the variant. Light Tournaments desktop/mobile renders were compared with Figma; browser checks cover original assets, 231px schedule card, 48/46/46px rows, Light Setup/Tournaments round trip, remaining club tab destinations, light Profile and no mobile horizontal overflow. Dark Tournaments card and Setup navigation pass after sharing the variant. Light Setup desktop/mobile renders were compared against Figma; browser checks cover original assets, 267px form, default colors, editable fields, session draft contents, local video selection and scroll access, all club tab destinations and no mobile horizontal overflow. Dark Setup form dimensions and saving pass after sharing the variants. Light Live desktop/mobile renders were compared with Figma; browser checks cover original assets, 238px preview, 318px roster, five players, team assignment/count updates, mode selected state, all light camera tab round trips, Profile/Record light navigation and no mobile horizontal overflow. Dark 310px roster dimensions and assignment behavior pass after sharing the variant. Light Upload desktop/mobile renders were compared with Figma; browser checks cover original 328 × 190 artwork, exact 318.84px card and 130px offset, native chooser, valid/invalid local file feedback, light Upload/Library round trip, Live destination and no mobile horizontal overflow. Dark uploader dimensions and file selection, plus shared Club Setup uploader, pass after sharing the variant. Light Library desktop/mobile renders were compared with Figma; browser checks cover original loaded icons, exact 135px queue and 126px offset, both progress values and fill ratios, active recording navigation, camera tab destinations, light Profile and no horizontal mobile overflow. Dark Library dimensions/progress and Upload/Library navigation pass after sharing the variants. Light Active desktop/mobile renders were compared against Figma; browser checks cover original loaded assets, six 70px cards, all four filters and selected states, search/empty state, all light Friends tab round trips, light Profile/Friends navigation, scroll access and no mobile horizontal overflow. Dark Active list, filter and Messages navigation pass after sharing the light variant. Light Messages desktop/mobile renders were compared with Figma; browser checks cover loaded original assets, exact 179px card, empty submission, trimmed local message append and composer clearing, conversation search/empty state, light Messages/Rivalry tabs, light Profile navigation and no mobile horizontal overflow. Dark Messages dimensions, local Send and Rivalry navigation pass after sharing the variant. Light Rivalry desktop/mobile renders were compared against Figma; browser checks cover original light assets, 184px card, 64% value, search and empty state, light Profile/Friends navigation and active state, and mobile horizontal overflow. Dark Rivalry and all three existing Friends tabs pass after sharing light variants. Light Profile desktop/mobile checks cover local assets, 190px attributes card, four progress values, both card variants, activity scrolling, light Settings and Custom Card round trips, active navigation and no horizontal mobile overflow. Dark Profile checks pass after sharing the variants. Light Custom Card desktop/mobile checks cover original assets, 281px Identity card, correct initial variant and flip, local image selection, fields/presets/palettes/Holo controls, session draft contents, Profile navigation, and mobile overflow. Dark Custom Card behavior is checked again after sharing the variants. Light Settings desktop/mobile renders were reviewed against Figma; checks cover original light artwork and navigation icons, shared card geometry, initial Club state, theme switching both directions, local preference drafts, Profile links, deletion integration feedback, and no horizontal overflow. Dark Settings checks are repeated after sharing the theme variants. Settings desktop/mobile renders were reviewed; browser checks cover original artwork, card dimensions, local accent/privacy selected states and session drafts, deletion integration feedback, Profile/Settings links, scrolling and no horizontal mobile overflow. Custom Card desktop/mobile renders were compared with Figma; browser checks cover original local assets, 281px Identity surface, correct initial reverse variant, editable identity fields, title presets, palettes, Holo state, saved session draft values, both Profile links, and no horizontal mobile overflow. Profile desktop/mobile renders were reviewed against Figma. Checks cover local assets, 190px attributes card, all four progress values, both player card toggle states, scroll access to recent activity, Home/Profile navigation and active state, and no horizontal mobile overflow. Rivalry desktop/mobile renders were compared with Figma; browser checks cover original assets, 184px card, 64% bar value and fill ratio, search and empty state, all three Friends tab routes and active state, and no horizontal overflow at 375px. Messages desktop/mobile renders were compared against Figma; checks cover original assets, 179px card height, measured composer button width, empty submission, local message append and clearing, conversation search, both shared tab links and active states, preservation of the six-player Active list, and no horizontal mobile overflow. Friends desktop/mobile browser checks cover every original asset, six 70px cards, search, presence filters, empty requests, Home/Friends navigation, active state, and no horizontal mobile overflow. Camera Library checks cover the 135px card, both progress values and fill ratios, original navigation assets, all camera tab links, active state, and no horizontal overflow at 375px. Upload checks cover original local imagery and dimensions, desktop/mobile comparison, valid/invalid file selection, Live/Upload tab navigation and active state, shared Club Setup uploader, and no horizontal document overflow. Camera desktop/mobile renders were reviewed; checks cover every local image and intrinsic size, five-player roster, assignment state and counts, mode selection, Start Session and Record navigation, and no mobile horizontal overflow. Setup checks cover original local artwork, desktop/mobile renders, default colors, local draft contents, video selection, all four club tab links and mobile overflow. Tournaments desktop and 375px renders were reviewed against Figma; browser checks cover loaded local assets, exact card/row heights, all three club tab routes, active state, and no horizontal overflow. Club Activity browser checks verify local SVGs and intrinsic sizes, two activity rows, local posting, both tab directions, active tab state, and no horizontal document overflow at 375px. Club Leaderboard desktop and 375px renders were reviewed; browser checks cover every loaded SVG and intrinsic size, five ranks, active Club Hub state, Home/Club Hub navigation, scrolling, local comment submission, and horizontal overflow. Dashboard browser checks verify original assets, scroll access, tutorial-to-home navigation, and no horizontal overflow at 375px. Desktop and 375px browser renders were reviewed against Figma; all images load locally and mobile has no horizontal document overflow. Browser checks cover invalid/valid handle formats, session draft retention, all three Onboarding 3 destination links, navigation into Player Handle and Face Scan, the completed progress state, loaded Face Scan and court artwork, club rows and badges, and navigation from Face Scan to Find Clubs and from Find Clubs to Recording Tutorial, the tutorial assets and three-step indicator, and preserved club card dimensions after sharing the surface component.
+This is a generic starter configuration. The team can add project-specific dependencies and startup commands later.
