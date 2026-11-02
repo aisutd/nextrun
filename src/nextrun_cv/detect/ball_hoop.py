@@ -1,4 +1,4 @@
-"""Ball + rim detection using the team's YOLOv8n model (models/ball_hoop_model.pt, classes ball/rim)."""
+"""Ball + rim detection (weights/ball_hoop/, active one in weights/active.json; classes ball/rim)."""
 from __future__ import annotations
 
 import numpy as np
@@ -22,7 +22,7 @@ class BallHoopDetector:
         res = self.model.predict(
             frame,
             conf=min(self.cfg.ball_conf, self.cfg.rim_conf),
-            imgsz=self.cfg.input_size(frame.shape),
+            imgsz=self.cfg.input_size(frame.shape, self.cfg.ball_max_imgsz),
             device=self.cfg.device,
             verbose=False,
         )[0]

@@ -84,3 +84,47 @@ def test_config_roundtrip(tmp_path):
     c.events.assist_window_s = 2.5
     c.save(tmp_path / "c.json")
     assert Config.load(tmp_path / "c.json").events.assist_window_s == 2.5
+
+
+def _walk(tid: int, frames_idx, x0: float, vx: float, court: bool = True) -> dict[int, PlayerObs]:
+    """A player walking along the court x axis (court_xy in metres; image feet = 100 px per metre)."""
+    out = {}
+    for i in frames_idx:
+        x = x0 + vx * i / 30
+        p = PlayerObs(tid, (100 * x - 20, 300.0, 100 * x + 20, 480.0), 0.9)
+        p.court_xy = (x, 0.0) if court else None
+        out[i] = p
+    return out
+
+
+def _clip(*tracks) -> list[FrameState]:
+    frames = [FrameState(i, i / 30) for i in range(max(i for t in tracks for i in t) + 1)]
+    for t in tracks:
+        for i, p in t.items():
+            frames[i].players.append(p)
+    return frames
+
+
+def test_stitch_joins_a_player_picked_up_again_where_they_could_have_run_to():
+    from nextrun_cv.config import StitchConfig
+    from nextrun_cv.identity.stitch import stitch_tracks
+
+    red, blue = np.eye(4)[0], np.eye(4)[1]
+    lost = _walk(1, range(0, 30), 0.0, 3.0)  # 0 -> 3 m in 1 s, then hidden for 0.5 s
+    found = _walk(2, range(45, 90), 0.0, 3.0)  # reappears at 4.5 m, still running
+    far = _walk(3, range(45, 90), -10.0, 0.0)  # someone across the court
+    frames = _clip(lost, found, far)
+    emb = {1: red, 2: red, 3: red}
+    joined = stitch_tracks(frames, emb, StitchConfig())
+    assert joined == {2: 1}
+    assert {p.track_id for f in frames[45:] for p in f.players} == {1, 3}
+    assert 2 not in emb and 1 in emb
+
+    # other team's colours, or tagged as someone else: not joined
+    frames = _clip(_walk(1, range(0, 30), 0.0, 3.0), _walk(2, range(45, 90), 0.0, 3.0))
+    assert stitch_tracks(frames, {1: red, 2: blue}, StitchConfig()) == {}
+    frames = _clip(_walk(1, range(0, 30), 0.0, 3.0), _walk(2, range(45, 90), 0.0, 3.0))
+    assert stitch_tracks(frames, {1: red, 2: red}, StitchConfig(), {1: "Ann", 2: "Bo"}) == {}
+    # too far to have got there in 0.5 s (no court: image distance in player heights)
+    frames = _clip(_walk(1, range(0, 30), 0.0, 3.0, court=False), _walk(2, range(45, 90), 20.0, 0.0, court=False))
+    assert stitch_tracks(frames, {1: red, 2: red}, StitchConfig()) == {}

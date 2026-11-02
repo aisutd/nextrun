@@ -4,10 +4,42 @@ player's bounding-box height so they stay roughly scale-invariant across camera 
 from __future__ import annotations
 
 import json
+import shutil
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]  # src/nextrun_cv/config.py -> repo
+# weights/<kind>/<run>.pt, one folder per model kind (players, ball_hoop, court); weights/active.json names the
+# file the pipeline uses for each kind. Install a newly trained model with install_weights().
+WEIGHTS_DIR = REPO_ROOT / "weights"
+ACTIVE_WEIGHTS = WEIGHTS_DIR / "active.json"
+_DEFAULT_ACTIVE = {"players": "players/yolo26m-pose.pt", "ball_hoop": "ball_hoop/ball_pseudo.pt",
+                   "court": "court/court_synth.pt"}
+
+
+def active_weights(kind: str) -> str:
+    """Path of the weights the pipeline uses for `kind` ("players", "ball_hoop" or "court")."""
+    try:
+        active = json.loads(ACTIVE_WEIGHTS.read_text())
+    except (OSError, ValueError):
+        active = {}
+    return str(WEIGHTS_DIR / active.get(kind, _DEFAULT_ACTIVE[kind]))
+
+
+def install_weights(kind: str, src: str | Path, name: str) -> Path:
+    """Save `src` as weights/<kind>/<name>.pt and make it the active model for `kind`. The previously active
+    file stays where it is, so switching back is a one-line change in weights/active.json."""
+    dst = WEIGHTS_DIR / kind / f"{name}.pt"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if Path(src).resolve() != dst.resolve():
+        shutil.copyfile(src, dst)
+    try:
+        active = json.loads(ACTIVE_WEIGHTS.read_text())
+    except (OSError, ValueError):
+        active = dict(_DEFAULT_ACTIVE)
+    active[kind] = dst.relative_to(WEIGHTS_DIR).as_posix()
+    ACTIVE_WEIGHTS.write_text(json.dumps(active, indent=2) + "\n")
+    return dst
 
 
 @dataclass
@@ -45,12 +77,15 @@ class CourtSpec:
 
 @dataclass
 class ModelConfig:
-    ball_hoop_weights: str = str(REPO_ROOT / "models" / "ball_hoop_model.pt")
-    # pose model: person boxes + 17 COCO keypoints (auto-downloaded on first use)
-    player_weights: str = str(REPO_ROOT / "models" / "yolo26m-pose.pt")
-    court_keypoint_weights: str = str(REPO_ROOT / "models" / "court_model.pt")
-    court_keypoint_config: str = str(REPO_ROOT / "models" / "court_keypoints.json")
-    tracker_cfg: str = str(REPO_ROOT / "models" / "botsort_reid.yaml")
+    # defaults come from weights/active.json
+    ball_hoop_weights: str = field(default_factory=lambda: active_weights("ball_hoop"))
+    # pose model: person boxes + 17 COCO keypoints (pretrained; auto-downloaded on first use)
+    player_weights: str = field(default_factory=lambda: active_weights("players"))
+    court_keypoint_weights: str = field(default_factory=lambda: active_weights("court"))
+    court_keypoint_config: str = str(WEIGHTS_DIR / "court" / "court_keypoints.json")
+    tracker_cfg: str = str(WEIGHTS_DIR / "players" / "botsort_reid.yaml")
+    # used instead when the camera moves (court.track.camera_moves): same tracker plus camera-motion compensation
+    tracker_moving_cfg: str = str(WEIGHTS_DIR / "players" / "botsort_reid_moving.yaml")
     device: str | None = None  # None -> ultralytics picks cuda if available
     player_conf: float = 0.35
     ball_conf: float = 0.25
@@ -59,11 +94,14 @@ class ModelConfig:
     # small in wide fixed-camera shots, and downscaling a 4K frame to 1280 loses most of them
     imgsz: int | None = None
     max_imgsz: int = 3840
+    # the ball/rim model is trained at 1024 and judged (check_ball_footage.py) at <= 1920; at 3840 it sees
+    # objects at scales it never trained on (e.g. a frame-sized false "rim" on the outdoor clip)
+    ball_max_imgsz: int = 1920
 
-    def input_size(self, frame_shape) -> int:
+    def input_size(self, frame_shape, cap: int | None = None) -> int:
         if self.imgsz:
             return self.imgsz
-        return min(self.max_imgsz, max(frame_shape[:2]) // 32 * 32)
+        return min(cap or self.max_imgsz, max(frame_shape[:2]) // 32 * 32)
 
 
 @dataclass
@@ -87,6 +125,10 @@ class EventConfig:
     rim_zone_w: float = 1.5  # rim-zone half-width in rim widths
     rim_zone_h: float = 3.0  # rim-zone height above the rim in rim widths
     make_window_s: float = 2.0  # time after reaching rim zone to observe the ball pass through
+    # a make crosses the rim plane downward near the rim's middle. Rim boxes usually include the net, so the
+    # plane is just below the box top, not its centre (a ball off the front rim drops through the box too).
+    make_plane: float = 0.1  # rim plane below the box top, in rim widths (capped at half the box height)
+    make_center_tol: float = 0.25  # |x - rim centre| at the crossing, in rim widths
     shot_min_rise_frac: float = 0.15  # ball must rise this fraction of shooter bbox height after release
     airball_max_rim_dist: float = 4.0  # flight peaking above rim within this many rim widths -> attempt
     assist_window_s: float = 3.0
@@ -94,6 +136,15 @@ class EventConfig:
     dunk_release_rim_dist: float = 1.5  # release within this many rim widths of the rim
     dribble_min_amp: float = 0.15  # bounce amplitude as fraction of holder bbox height
     rebound_window_s: float = 6.0
+    # after a make the other team inbounds under that basket: a flight through the same rim this soon after is
+    # the inbound pass, not a shot
+    after_make_dead_s: float = 5.0
+    # the rebounding team is the one holding the ball longest this long after the first touch (the first touch in
+    # a crowded paint is often a wrong attribution or a tip); 0 = the first toucher's team
+    rebound_control_s: float = 3.0
+    # shot position: the shooter's feet in the frame they are lowest in the image this long before release (on the
+    # floor; at release a jump shooter is in the air and the raised feet map to the wrong court spot)
+    shot_pos_lookback_s: float = 1.0
     three_close_margin_m: float = 0.46  # within 1.5 ft of the 3PT line ~ court-mapping error: flag as uncertain
 
 
@@ -112,9 +163,38 @@ class FusionConfig:
 
 
 @dataclass
+class CameraConfig:
+    """Fixed vs moving camera (see court/track.py)."""
+
+    mode: str = "auto"  # auto | static | moving
+    moving_px: float = 0.01  # moving when frames ~0.5 s apart shift by more than this share of the frame width
+    drift_px: float = 0.02  # ... or when the view drifts this far from the first frame over the clip
+    keyframe_s: float = 0.2  # moving camera: run the court model every this many seconds
+    window_s: float = 1.0  # each frame combines the court fits within this many seconds
+    spread_m: float = 1.0  # per-frame confidence decays with the fits' disagreement in meters (exp(-d / spread_m))
+    motion_width: int = 640  # frames are downscaled to this width to measure camera motion
+
+
+@dataclass
 class TeamConfig:
     n_teams: int = 2
     sample_every: int = 5  # sample torso colors every N frames per track
+    max_other_share: float = 0.0  # >0: a small extra colour cluster (referees) gets no team (identity.teams)
+
+
+@dataclass
+class StitchConfig:
+    """Joining a lost track to the track that picks the same player up again (identity.stitch)."""
+
+    enabled: bool = True
+    max_gap_s: float = 10.0  # longer gaps are joined on colour alone (the reach covers the court): re-entries on a pan
+    velocity_s: float = 0.5  # end velocity measured over (and extrapolated for at most) this long
+    vmax_mps: float = 7.0  # reach on the court: r0_m + vmax_mps * gap
+    r0_m: float = 1.0
+    vmax_hps: float = 3.0  # reach in the image without a court, in player heights per second
+    r0_h: float = 1.0
+    max_color_dist: float = 0.5  # 1 - cosine similarity of torso colour embeddings
+    w_color: float = 1.0
 
 
 @dataclass
@@ -126,7 +206,9 @@ class Config:
     possession: PossessionConfig = field(default_factory=PossessionConfig)
     events: EventConfig = field(default_factory=EventConfig)
     teams: TeamConfig = field(default_factory=TeamConfig)
+    stitch: StitchConfig = field(default_factory=StitchConfig)
     fusion: FusionConfig = field(default_factory=FusionConfig)
+    camera: CameraConfig = field(default_factory=CameraConfig)
     court_method: str = "auto"  # auto | keypoints | lines | manual
     court_calib_frames: int = 10
     stride: int = 1  # process every Nth frame

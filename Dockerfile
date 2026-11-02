@@ -6,9 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY src/nextrun_cv src/nextrun_cv
-# editable: nextrun_cv finds models/ and data/venues/ relative to /app
+# editable: nextrun_cv finds weights/ and data/venues/ relative to /app
 RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -e ".[detect,api]"
-COPY models models
+COPY weights weights
 COPY data/venues data/venues
 
 ENV NEXTRUN_DATA=/app/results/games

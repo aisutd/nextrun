@@ -1,6 +1,6 @@
 """Ball+rim model accuracy per source/domain on a ball_rim dataset (src/scripts/build_ball_rim_dataset.py).
 
-  python src/scripts/eval_ball_rim.py --data data/ball_rim [--weights models/ball_hoop_model.pt] [--split test]
+  python src/scripts/eval_ball_rim.py --data data/ball_rim [--weights weights/ball_hoop/ball_pseudo.pt] [--split test]
 
 Per source: precision, recall and mAP50 for ball and rim separately (ball recall is what limits shots,
 makes and rebounds). Uses the per-source image lists the builder writes to data/ball_rim/lists/.

@@ -81,10 +81,17 @@ def court_usable(calib: CourtCalib | None, cfg: FusionConfig) -> bool:
     return calib is not None and calib.conf >= cfg.min_court_conf
 
 
-def annotate_players(frames: list[FrameState], calib: CourtCalib) -> None:
-    """Set each player's court position from their feet (in place)."""
+def frame_court(court, idx: int, cfg: FusionConfig) -> CourtCalib | None:
+    """The usable court for frame `idx`, or None. court: a CourtCalib (fixed camera) or a court.track.CourtTrack."""
+    c = court.at(idx) if court is not None else None
+    return c if court_usable(c, cfg) else None
+
+
+def annotate_players(frames: list[FrameState], court) -> None:
+    """Set each player's court position from their feet (in place), with each frame's court."""
     for f in frames:
-        if f.players:
+        calib = court.at(f.idx)
+        if f.players and calib is not None:
             for p, xy in zip(f.players, calib.image_to_court([p.feet for p in f.players])):
                 p.court_xy = (float(xy[0]), float(xy[1]))
 
@@ -96,11 +103,12 @@ def on_court(xy, spec: CourtSpec, margin: float, play_area=None) -> bool:
     return abs(xy[0]) <= spec.length / 2 + margin and abs(xy[1]) <= spec.width / 2 + margin
 
 
-def drop_off_court(frames: list[FrameState], calib: CourtCalib, margin: float, play_area=None) -> int:
+def drop_off_court(frames: list[FrameState], court, margin: float, play_area=None) -> int:
     """Remove people standing off the court (spectators, benches, next game). Returns how many."""
     n = 0
     for f in frames:
-        if f.players:
+        calib = court.at(f.idx)
+        if f.players and calib is not None:
             keep = [p for p, xy in zip(f.players, calib.image_to_court([p.feet for p in f.players]))
                     if on_court(xy, calib.spec, margin, play_area)]
             n += len(f.players) - len(keep)
@@ -125,17 +133,22 @@ def ball_holder(f: FrameState, cfg: PossessionConfig) -> PlayerObs | None:
 
 
 # --- everything ----------------------------------------------------------------------------------------
-def fuse(frames: list[FrameState], calib: CourtCalib | None, cfg: Config) -> dict:
-    """Apply all court-dependent geometry to tracked frames (in place). Returns a small report."""
-    if not court_usable(calib, cfg.fusion):
+def fuse(frames: list[FrameState], court, cfg: Config) -> dict:
+    """Apply all court-dependent geometry to tracked frames (in place). Returns a small report.
+    court: a CourtCalib (fixed camera) or a court.track.CourtTrack (moving camera: a court per frame); frames
+    whose court is missing or below min_court_conf are left as they are."""
+    usable = [f for f in frames if frame_court(court, f.idx, cfg.fusion) is not None]
+    if not usable:
         return {"court": False}
-    dropped = drop_off_court(frames, calib, cfg.fusion.off_court_margin_m, cfg.fusion.play_area)
-    annotate_players(frames, calib)
-    return {"court": True, "court_conf": calib.conf, "off_court_dropped": dropped}
+    dropped = drop_off_court(usable, court, cfg.fusion.off_court_margin_m, cfg.fusion.play_area)
+    annotate_players(usable, court)
+    return {"court": True, "court_conf": court.conf, "court_frames": len(usable) / len(frames),
+            "off_court_dropped": dropped}
 
 
 def describe(f: FrameState, calib: CourtCalib | None, cfg: Config) -> dict:
     """JSON-ready view of one fused frame: where everyone is, who has the ball, which basket is which."""
+    calib = calib.at(f.idx) if calib is not None else None
     usable = court_usable(calib, cfg.fusion)
     holder = ball_holder(f, cfg.possession)
     players = []

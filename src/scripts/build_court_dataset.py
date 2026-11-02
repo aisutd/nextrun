@@ -35,7 +35,7 @@ from nextrun_cv.datasets import (  # noqa: E402
     YoloWriter, camera_shift, iter_yolo_export, refine_to_court_lines, pose_label, project_keypoints, read_data_yaml, roboflow_download, source_group,
 )
 
-KP_CONFIG = REPO_ROOT / "models" / "court_keypoints.json"
+KP_CONFIG = REPO_ROOT / "weights" / "court" / "court_keypoints.json"
 N_KP = 24
 
 

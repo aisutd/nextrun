@@ -6,7 +6,7 @@ from nextrun_cv.config import REPO_ROOT, Config, CourtSpec
 from nextrun_cv.court import template
 from nextrun_cv.court.auto import calibrate_court
 from nextrun_cv.court.base import CourtCalib, homography_from_landmarks
-from nextrun_cv.court.keypoints import load_keypoint_config
+from nextrun_cv.court.keypoints import ROT_IDX, fold_to_one_half, load_keypoint_config, views_along_convention
 from nextrun_cv.court.lines import LineCourtEstimator
 
 SPEC = CourtSpec()
@@ -112,7 +112,7 @@ def test_lines_auto_from_scratch():
     assert _court_error(calib, Hc2i) < 0.5
 
 
-KP_CONFIG = REPO_ROOT / "models" / "court_keypoints.json"
+KP_CONFIG = REPO_ROOT / "weights" / "court" / "court_keypoints.json"
 
 
 def test_keypoint_config_matches_highschool_court():
@@ -181,3 +181,19 @@ def test_venue_profile_roundtrip(tmp_path):
     spec, pts = load_venue(str(p), (1920, 1080))
     assert spec.name == "nba" and pts["R_base_top"] == (50, 100)
 
+
+
+def test_fold_to_one_half_moves_minority_points():
+    pairs = {12: (1.0, 1.0), 13: (2.0, 1.0), 16: (1.0, 2.0), 3: (5.0, 5.0)}  # 3 is 12's partner, mislabelled
+    folded = fold_to_one_half(pairs)
+    assert set(folded) == {12, 13, 16}
+    assert folded[12] == (1.0, 1.0)  # an existing point wins over a moved partner
+    assert fold_to_one_half({12: (0, 0), 13: (1, 0)}) is None  # one half only: nothing to fold
+    assert all(ROT_IDX[ROT_IDX[i]] == i for i in ROT_IDX)
+
+
+def test_view_convention_picks_one_of_the_two_symmetric_readings():
+    """A court and the same court turned 180 degrees look identical; exactly one reading meets the convention."""
+    Hi2c = np.linalg.inv(_camera_H())
+    turned = np.diag([-1.0, -1.0, 1.0]) @ Hi2c
+    assert views_along_convention(Hi2c, 1280, 720) != views_along_convention(turned, 1280, 720)

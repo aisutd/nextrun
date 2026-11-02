@@ -103,6 +103,7 @@ def resolve_identities(
     min_track_frames: int = 5,
     link_threshold: float = 0.6,  # 0.7*colour_similarity + 0.3*continuity must exceed this
     fps: float = 30.0,
+    max_other_share: float = 0.0,  # see assign_teams: referees / court-edge people left without a team
 ) -> Identities:
     spans = {t: s for t, s in track_spans(frames).items() if s.n >= min_track_frames or t in tags}
     ids = Identities()
@@ -146,7 +147,8 @@ def resolve_identities(
         team = ids.player_team.get(name)
         if team and tid in track_emb:
             seeds.setdefault(team, []).append(track_emb[tid])
-    team_of_track = assign_teams({t: e for t, e in track_emb.items() if t in spans}, n_teams, seeds or None)
+    team_of_track = assign_teams({t: e for t, e in track_emb.items() if t in spans}, n_teams, seeds or None,
+                                 {t: spans[t].n for t in spans}, max_other_share)
     for tid in spans:
         name = ids.player(tid)
         if name not in ids.player_team and tid in team_of_track:

@@ -1,8 +1,8 @@
 """Method C — learned court keypoints (Rishabh's court-detection model, PR #2).
 
 YOLO11s-pose, one "court" instance with 24 keypoints, trained on high-school gym footage from corner and
-sideline cameras. Weights: models/court_model.pt. Keypoint court positions + 3PT geometry:
-models/court_keypoints.json (feet, measured from the training labels). Visible keypoints -> RANSAC
+sideline cameras. Weights: weights/court/ (active one in weights/active.json). Keypoint court positions + 3PT geometry:
+weights/court/court_keypoints.json (feet, measured from the training labels). Visible keypoints -> RANSAC
 homography -> court meters in the pipeline frame (origin center court, +x toward the right basket).
 
 Keypoint ids (left basket / right basket):
@@ -59,6 +59,36 @@ def load_keypoint_config(path: str | Path) -> dict:
 
 
 ARC_IDS = {18: 0, 19: 0, 20: 0, 21: 1, 22: 1, 23: 1}  # 3PT-arc keypoints -> hoop index (0 left, 1 right)
+# the court is symmetric under a 180-degree turn about center court: each keypoint's partner on the other half
+ROT_IDX = {0: 15, 1: 14, 2: 13, 3: 12, 4: 11, 5: 10, 6: 17, 7: 16, 8: 9, 18: 23, 19: 22, 20: 21}
+ROT_IDX.update({v: k for k, v in ROT_IDX.items()})
+LEFT_IDS = {0, 1, 2, 3, 4, 5, 6, 7, 18, 19, 20}
+RIGHT_IDS = {10, 11, 12, 13, 14, 15, 16, 17, 21, 22, 23}
+
+
+def views_along_convention(H: np.ndarray, w: int, h: int) -> bool:
+    """Labelling convention of every court set (holds for 1023/1024 real training images): the camera's view
+    direction on the floor (floor under the frame center minus floor under the bottom edge) has d_x > d_y.
+    True when that holds or can't be told (frame center above the horizon)."""
+    a, b = H @ [w / 2, h - 1, 1.0], H @ [w / 2, h / 2, 1.0]
+    if a[2] * b[2] <= 0:
+        return True
+    d = b[:2] / b[2] - a[:2] / a[2]
+    return bool(d[0] > d[1])
+
+
+def fold_to_one_half(pairs: dict[int, tuple[float, float]]) -> dict[int, tuple[float, float]] | None:
+    """With one basket in view the model can mix up which basket it is, labelling some points as their partners
+    on the other half (e.g. 3 for 12). Move the minority half's points to their partners on the majority half;
+    None if the prediction isn't mixed. Where both a point and its moved partner exist, the original is kept."""
+    left, right = [i for i in pairs if i in LEFT_IDS], [i for i in pairs if i in RIGHT_IDS]
+    if not left or not right:
+        return None
+    minority = set(left) if len(left) < len(right) else set(right)
+    out = {i: uv for i, uv in pairs.items() if i not in minority}
+    for i in minority:
+        out.setdefault(ROT_IDX[i], pairs[i])
+    return out
 
 
 def ideal_keypoints(spec: CourtSpec) -> dict[int, tuple[float, float]]:
@@ -145,9 +175,25 @@ class KeypointCourtEstimator(CourtEstimator):
         pairs = self.detect(frame) if pairs is None else pairs
         h, w = frame.shape[:2]
         calib = self._fit(pairs)
+        folded = fold_to_one_half(pairs)
+        if folded is not None and len(folded) >= 4:  # keep whichever reading of the points is more consistent
+            try:
+                alt = self._fit(folded)
+                if alt.conf > calib.conf:
+                    calib, pairs = alt, folded
+            except CourtNotFound:
+                pass
         if orientation_sign(calib.H, (w / 2, h / 2)) < 0:
             # model confused which half it is looking at: relabel left <-> right and refit
             flip = self.kp["flip_idx"]
-            calib = self._fit({flip[i]: uv for i, uv in pairs.items() if flip[i] in self.kp["court_m"]})
+            pairs = {flip[i]: uv for i, uv in pairs.items() if flip[i] in self.kp["court_m"]}
+            calib = self._fit(pairs)
+        if not views_along_convention(calib.H, w, h):
+            # the court looks the same turned 180 degrees; the training labels pick the reading where the camera
+            # looks along +x more than +y, so a fit that breaks that has the two baskets swapped
+            try:
+                calib = self._fit({ROT_IDX.get(i, i): uv for i, uv in pairs.items() if ROT_IDX.get(i, i) in self.kp["court_m"]})
+            except CourtNotFound:
+                pass
         calib.image_size = (w, h)
         return calib

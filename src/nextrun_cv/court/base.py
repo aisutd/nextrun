@@ -27,6 +27,10 @@ class CourtCalib:
     correspondences: dict[str, tuple[float, float]] = field(default_factory=dict)  # landmark -> image px
     checks: dict = field(default_factory=dict)  # cross-model checks (fusion.validate_court), e.g. rim agreement
 
+    def at(self, idx: int) -> "CourtCalib":
+        """Same call as court.track.CourtTrack.at: one calibration holds for every frame of a fixed camera."""
+        return self
+
     @property
     def H_inv(self) -> np.ndarray:
         return np.linalg.inv(self.H)

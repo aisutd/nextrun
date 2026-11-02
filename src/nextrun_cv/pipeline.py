@@ -1,7 +1,8 @@
 """End-to-end pipeline, split into resumable stages that write to one output directory:
 
   detect    video -> tracks.json.gz (players+pose, ball, rims), appearance.json, tagging_frame.jpg
-  calibrate video -> court.json   (keypoints / lines / manual)
+  calibrate video -> court_track.json (+ court.json)   the court per frame: one fit for a fixed camera, keypoint
+                                                       fits linked by camera motion for a moving one (court/track.py)
   [user writes tags.json from tagging_frame.jpg]
   analyze   -> identities.json, events.json, flights.json, boxscore.csv, team_totals.csv, charts
   render    -> annotated.mp4
@@ -9,6 +10,7 @@
 Detection is the only GPU-heavy stage; re-running analyze with new tags or thresholds is cheap."""
 from __future__ import annotations
 
+import copy
 import gzip
 import json
 import logging
@@ -20,11 +22,13 @@ import numpy as np
 from . import fusion
 from .config import Config
 from .court.auto import calibrate_court
-from .court.base import CourtCalib
+from .court.base import CourtCalib, CourtNotFound
+from .court.track import CameraMotion, CourtTrack, camera_moves, stabilize_view, track_court
 from .court.venues import apply_venue, load_venue
-from .detect.ball_track import stabilize_rims, track_ball
+from .detect.ball_track import stabilize_rims, stabilize_rims_moving, track_ball
 from .events.analyzer import GameAnalysis, GameAnalyzer
 from .identity.appearance import AppearanceBank
+from .identity.stitch import stitch_tracks
 from .identity.tagging import Identities, best_tagging_frame, load_tags, resolve_identities, tagging_sheet
 from .schema import FrameState, frames_from_records, frames_to_records
 from .stats.boxscore import box_score, team_totals
@@ -53,10 +57,15 @@ def load_frames(path: Path) -> list[FrameState]:
 def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool = True) -> list[FrameState]:
     from .integration import NextRun
 
-    cfg = cfg or Config()
+    cfg = copy.deepcopy(cfg or Config())
     out = _out(out_dir)
     info = probe(video)
+    moving = camera_moves(video, cfg)
+    if moving:  # the tracker has to compensate camera motion, or a pan reads as every player jumping
+        cfg.models.tracker_cfg = cfg.models.tracker_moving_cfg
+    log.info("camera: %s", "moving" if moving else "fixed")
     models = NextRun(cfg)
+    motion = CameraMotion(cfg.camera.motion_width) if moving else None
     bank = AppearanceBank(cfg.teams.sample_every)
     frames: list[FrameState] = []
     total = info.n_frames // cfg.stride if cfg.max_frames is None else cfg.max_frames
@@ -65,21 +74,28 @@ def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool =
         f.ball = None  # chosen by the ball tracker below, from all candidates over time
         frames.append(f)
         bank.add(idx, img, f.players)
+        if motion is not None:
+            motion.add(idx, img, [p.bbox for p in f.players])
         if progress and n % 100 == 0:
             log.info("detect %d/%d frames", n, total)
     track_ball(frames, cfg.ball)
-    stabilize_rims(frames)
+    if motion is not None:
+        stabilize_rims_moving(frames, motion.seg, motion.M, (info.width, info.height))
+        motion.save(out / "camera_motion.json")
+    else:
+        stabilize_rims(frames)
     save_frames(frames, out / "tracks.json.gz")
     (out / "appearance.json").write_text(json.dumps(bank.to_dict()))
-    (out / "video.json").write_text(json.dumps({**info.__dict__, "stride": cfg.stride}))
+    (out / "video.json").write_text(json.dumps({**info.__dict__, "stride": cfg.stride, "moving_camera": moving}))
     k = best_tagging_frame(frames)
     cv2.imwrite(str(out / "tagging_frame.jpg"), tagging_sheet(read_frame(video, frames[k].idx), frames[k]))
     log.info("detect done: %d frames, tagging frame %d", len(frames), frames[k].idx if frames else -1)
     return frames
 
 
-def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points=None, venue: str | None = None) -> CourtCalib:
-    """venue: a saved camera profile (venues/<name>.json); sets the court type and the manual points."""
+def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points=None, venue: str | None = None) -> CourtTrack:
+    """The court for every frame -> court_track.json (court.json keeps the single best fit).
+    venue: a saved camera profile (venues/<name>.json); sets the court type and the manual points (fixed camera)."""
     cfg = cfg or Config()
     out = _out(out_dir)
     if venue is not None:
@@ -88,6 +104,22 @@ def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points
         manual_points = load_venue(venue, (info.width, info.height))[1]
     tracks = out / "tracks.json.gz"
     frames = load_frames(tracks) if tracks.exists() else []
+    vjson = out / "video.json"
+    moving = json.loads(vjson.read_text()).get("moving_camera") if vjson.exists() and cfg.camera.mode == "auto" else None
+    if moving is None:
+        moving = camera_moves(video, cfg)
+    if moving and frames and manual_points is None and cfg.court_method in ("auto", "keypoints"):
+        try:
+            mpath = out / "camera_motion.json"
+            track = track_court(video, frames, cfg, CameraMotion.load(mpath) if mpath.exists() else None)
+        except CourtNotFound as e:
+            log.warning("moving camera: court track failed (%s); falling back to one calibration", e)
+        else:
+            if track.usable_share(cfg.fusion.min_court_conf) > 0:
+                track.save(out / "court_track.json")
+                track.best().save(out / "court.json")
+                return track
+            log.warning("moving camera: no frame got a usable court; falling back to one calibration")
     n = min(cfg.court_calib_frames, max(1, len(frames))) if frames else cfg.court_calib_frames
     picks = [frames[i] for i in np.linspace(0, len(frames) - 1, n).astype(int)] if frames else []
     imgs = [read_frame(video, f.idx) for f in picks] if picks else [read_frame(video, 0)]
@@ -97,25 +129,54 @@ def calibrate(video: str, out_dir: str, cfg: Config | None = None, manual_points
     rims_per_frame = [f.rims for f in picks] if picks else None
     calib = calibrate_court(imgs, cfg, manual_points, ignore, rim_xy, rims_per_frame)
     calib.save(out / "court.json")
-    return calib
+    track = CourtTrack.static(calib)
+    track.save(out / "court_track.json")
+    return track
+
+
+def load_court(out: Path, spec) -> CourtTrack | None:
+    """court_track.json (or an older run's court.json), with the court geometry set to `spec`."""
+    if (out / "court_track.json").exists():
+        track = CourtTrack.load(out / "court_track.json")
+    elif (out / "court.json").exists():
+        track = CourtTrack.static(CourtCalib.load(out / "court.json"))
+    else:
+        return None
+    track.spec = spec
+    for c in track.calibs.values():
+        c.spec = spec
+    return track
+
+
+def run_analysis(out: Path, cfg: Config, tags=None) -> tuple[GameAnalysis, Identities, list[FrameState], object]:
+    """Events from a detect + calibrate output dir, without writing anything (analyze() saves them)."""
+    frames = load_frames(out / "tracks.json.gz")
+    vinfo = json.loads((out / "video.json").read_text())
+    fps = vinfo["fps"] / vinfo.get("stride", 1)
+    emb = {int(k): np.asarray(v) for k, v in json.loads((out / "appearance.json").read_text()).items()}
+    calib = load_court(out, cfg.court)
+    report = fusion.fuse(frames, calib, cfg)
+    log.info("fusion: %s", report)
+    tags = load_tags(tags if tags is not None else (out / "tags.json" if (out / "tags.json").exists() else None))
+    if cfg.stitch.enabled:  # join lost tracks to the track that picks the player up again (tags follow the join)
+        joined = stitch_tracks(frames, emb, cfg.stitch, {t: v.get("name") or f"player{t}" for t, v in tags.items()})
+        tags = {joined.get(t, t): v for t, v in tags.items()}
+        log.info("stitch: %d tracks joined to earlier ones", len(joined))
+    # moving camera: identities and events work in a stabilized view (camera motion undone, court.track.stabilize_view)
+    view, view_court = frames, calib
+    if vinfo.get("moving_camera") and (out / "camera_motion.json").exists():
+        view, view_court = stabilize_view(frames, calib, CameraMotion.load(out / "camera_motion.json"))
+    ids = resolve_identities(view, emb, tags, cfg.teams.n_teams, fps=fps, max_other_share=cfg.teams.max_other_share)
+    analysis = GameAnalyzer(cfg, fps, ids, view_court).analyze(view)
+    return analysis, ids, frames, calib
 
 
 def analyze(out_dir: str, cfg: Config | None = None, tags=None) -> tuple[GameAnalysis, Identities, list[FrameState]]:
     cfg = cfg or Config()
     out = _out(out_dir)
-    frames = load_frames(out / "tracks.json.gz")
+    analysis, ids, frames, calib = run_analysis(out, cfg, tags)
     vinfo = json.loads((out / "video.json").read_text())
     fps = vinfo["fps"] / vinfo.get("stride", 1)
-    emb = {int(k): np.asarray(v) for k, v in json.loads((out / "appearance.json").read_text()).items()}
-    calib = CourtCalib.load(out / "court.json") if (out / "court.json").exists() else None
-    if calib is not None:
-        calib.spec = cfg.court
-    report = fusion.fuse(frames, calib, cfg)
-    log.info("fusion: %s", report)
-    tags = load_tags(tags if tags is not None else (out / "tags.json" if (out / "tags.json").exists() else None))
-    ids = resolve_identities(frames, emb, tags, cfg.teams.n_teams, fps=fps)
-    analysis = GameAnalyzer(cfg, fps, ids, calib).analyze(frames)
-
     (out / "identities.json").write_text(json.dumps(ids.to_dict(), indent=2))
     (out / "events.json").write_text(json.dumps([e.to_dict() for e in analysis.events], indent=2, default=float))
     (out / "flights.json").write_text(json.dumps([f.to_dict() for f in analysis.flights], default=float))
@@ -140,9 +201,11 @@ def render(video: str, out_dir: str, cfg: Config | None = None, analysis=None, i
     if analysis is None:
         analysis, ids, frames = analyze(out_dir, cfg)
     vinfo = json.loads((out / "video.json").read_text())
-    calib = CourtCalib.load(out / "court.json") if (out / "court.json").exists() else None
+    calib = load_court(out, cfg.court)
     path = out / "annotated.mp4"
-    _render(video, str(path), frames, analysis, ids, calib, vinfo["fps"], vinfo.get("stride", 1))
+    mpath = out / "camera_motion.json"
+    motion = CameraMotion.load(mpath) if vinfo.get("moving_camera") and mpath.exists() else None
+    _render(video, str(path), frames, analysis, ids, calib, vinfo["fps"], vinfo.get("stride", 1), motion=motion)
     return path
 
 

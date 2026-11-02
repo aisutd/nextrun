@@ -1,0 +1,94 @@
+{
+  "clips": 543,
+  "totals_gt": {
+    "shot": 601,
+    "shot3": 154,
+    "made": 259,
+    "made3": 49,
+    "points": 567,
+    "assist": 153,
+    "oreb": 110,
+    "block": 33
+  },
+  "totals_pred": {
+    "shot": 666,
+    "shot3": 97,
+    "made": 256,
+    "made3": 32,
+    "points": 544,
+    "dreb": 204,
+    "assist": 75,
+    "oreb": 179
+  },
+  "exact_count_rate": {
+    "shot": 0.6979742173112339,
+    "made": 0.8324125230202578,
+    "shot3": 0.7771639042357275,
+    "made3": 0.9171270718232044,
+    "points": 0.7771639042357275,
+    "assist": 0.7421731123388582,
+    "oreb": 0.7237569060773481
+  },
+  "clip_presence": {
+    "shot": {
+      "tp": 517,
+      "fn": 26,
+      "precision": 1.0,
+      "recall": 0.9521178637200737
+    },
+    "made": {
+      "tn": 240,
+      "tp": 212,
+      "fn": 47,
+      "fp": 44,
+      "precision": 0.828125,
+      "recall": 0.8185328185328186
+    },
+    "shot3": {
+      "tp": 64,
+      "tn": 363,
+      "fn": 87,
+      "fp": 29,
+      "precision": 0.6881720430107527,
+      "recall": 0.423841059602649
+    },
+    "made3": {
+      "tn": 480,
+      "tp": 18,
+      "fn": 31,
+      "fp": 14,
+      "precision": 0.5625,
+      "recall": 0.3673469387755102
+    },
+    "points": {
+      "tn": 240,
+      "tp": 212,
+      "fn": 47,
+      "fp": 44,
+      "precision": 0.828125,
+      "recall": 0.8185328185328186
+    },
+    "assist": {
+      "tn": 359,
+      "tp": 44,
+      "fn": 109,
+      "fp": 31,
+      "precision": 0.5866666666666667,
+      "recall": 0.2875816993464052
+    },
+    "oreb": {
+      "tn": 347,
+      "tp": 54,
+      "fp": 96,
+      "fn": 46,
+      "precision": 0.36,
+      "recall": 0.54
+    }
+  },
+  "made_given_one_shot": {
+    "gt_miss_pred_miss": 142,
+    "gt_miss_pred_make": 27,
+    "gt_make_pred_miss": 18,
+    "gt_make_pred_make": 177
+  }
+}

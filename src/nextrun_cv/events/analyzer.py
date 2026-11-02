@@ -43,14 +43,16 @@ class GameAnalyzer:
         self.fps = fps
         self.ids = ids or Identities()
         self.calib = calib
+        self._last_make = None
 
     # ---------------------------------------------------------------------------------------------
     def analyze(self, frames: list[FrameState]) -> GameAnalysis:
         out = GameAnalysis()
         if not frames:
             return out
-        if fusion.court_usable(self.calib, self.cfg.fusion):
-            fusion.annotate_players(frames, self.calib)
+        if self.calib is not None:  # a CourtCalib, or a CourtTrack with a court per frame
+            fusion.annotate_players([f for f in frames if fusion.frame_court(self.calib, f.idx, self.cfg.fusion)],
+                                    self.calib)
         segs = compute_possession(frames, lambda tid: self.ids.player(tid), self.cfg.possession, self.fps)
         out.segments = segs
         out.holder = [None] * len(frames)
@@ -69,6 +71,7 @@ class GameAnalyzer:
                 out.events.append(Event("dribble", frames[i].idx, frames[i].t, s.player, team))
 
         last_pass_to: dict[int, Event] = {}  # segment index -> pass that started it
+        self._last_make = None  # (t, rim box) of the latest made shot
         for si, s in enumerate(segs):
             nxt = segs[si + 1] if si + 1 < len(segs) else None
             f_end = nxt.start - 1 if nxt else len(frames) - 1
@@ -85,6 +88,8 @@ class GameAnalyzer:
                 ev = Event("shot", frames[s.end].idx, frames[s.end].t, s.player, team, shot)
                 ev.data["flight"] = len(out.flights) - 1
                 out.events.append(ev)
+                if shot["made"]:
+                    self._last_make = (ev.t, shot["rim"])
                 pass_ev = last_pass_to.get(si)
                 if (
                     shot["made"]
@@ -95,7 +100,7 @@ class GameAnalyzer:
                     out.events.append(Event("assist", pass_ev.frame, pass_ev.t, pass_ev.player, pass_ev.team,
                                             {"to": s.player, "shot_frame": ev.frame}))
                 if not shot["made"] and nxt is not None:
-                    self._rebound(out, frames, nxt, ev)
+                    self._rebound(out, frames, segs[si + 1:], ev)
                 continue
             if nxt is not None:
                 self._transition(out, frames, s, nxt, flight, si, last_pass_to)
@@ -123,10 +128,22 @@ class GameAnalyzer:
             out.events.append(ev)
             last_pass_to[si + 1] = ev
 
-    def _rebound(self, out, frames, nxt: Segment, miss: Event) -> None:
-        if frames[nxt.start].t - miss.t > self.cfg.events.rebound_window_s:
+    def _rebound(self, out, frames, after: list[Segment], miss: Event) -> None:
+        nxt = after[0]
+        t0 = frames[nxt.start].t
+        if t0 - miss.t > self.cfg.events.rebound_window_s:
             return
         team = self.ids.player_team.get(nxt.player)
+        held: dict[str, float] = {}
+        for s in after:
+            if frames[s.start].t > t0 + self.cfg.events.rebound_control_s:
+                break
+            tm = self.ids.player_team.get(s.player)
+            if tm is not None:
+                held[tm] = held.get(tm, 0.0) + frames[s.end].t - frames[s.start].t + 1 / self.fps
+        if held and max(held, key=held.get) != team:
+            team = max(held, key=held.get)
+            nxt = next(s for s in after if self.ids.player_team.get(s.player) == team)
         offensive = team is not None and team == miss.team
         out.events.append(Event("rebound", frames[nxt.start].idx, frames[nxt.start].t, nxt.player, team,
                                 {"offensive": offensive, "shot_frame": miss.frame}))
@@ -184,6 +201,10 @@ class GameAnalyzer:
         elif not rose and np.hypot(release_xy[0] - rim.center[0], release_xy[1] - rim.center[1]) > ec.dunk_release_rim_dist * rim.width:
             return None  # entered rim zone without rising: a pass under the basket, not a shot
 
+        if self._last_make is not None and frames[s.end].t - self._last_make[0] < ec.after_make_dead_s:
+            mx1, _, mx2, _ = self._last_make[1]
+            if abs((mx1 + mx2) / 2 - rim.center[0]) < 2 * rim.width:
+                return None  # inbound pass under the basket that was just scored on
         made, make_frame = self._made(frames, fl, rim, zone_hit)
         if zone_hit is not None:  # arc of the shot itself: release -> rim (not the fall through the net)
             fl.arc = fit_arc(fl.points[: zone_hit + 3]) or fl.arc
@@ -193,9 +214,10 @@ class GameAnalyzer:
         if shooter is not None and shooter.keypoints is not None:
             reach_y = min(reach_y, shooter.highest_hand_y())
         dunk = made and rel_d <= ec.dunk_release_rim_dist and reach_y <= rim.bbox[3] + 0.5 * rim.width
-        court_xy = shooter.court_xy if shooter is not None else None
+        court_xy = self._shot_position(frames, s) if shooter is not None else None
         three, dist_m, line_m = None, None, None
-        hoop = fusion.hoop_for_rim(self.calib, rim, self.cfg.fusion)  # the basket the ball went to
+        court = self.calib.at(frames[s.end].idx) if self.calib is not None else None
+        hoop = fusion.hoop_for_rim(court, rim, self.cfg.fusion)  # the basket the ball went to
         if court_xy is not None:
             if hoop is None:
                 hoop, _ = template.nearest_hoop(court_xy, self.cfg.court)
@@ -224,24 +246,31 @@ class GameAnalyzer:
             "airtime_s": fl.duration,
         }
 
+    def _shot_position(self, frames, s: Segment) -> tuple[float, float] | None:
+        """Court position the shot was taken from: the shooter's feet when they were last on the floor."""
+        i0 = max(s.start, s.end - int(self.cfg.events.shot_pos_lookback_s * self.fps))
+        cands = [p for f in frames[i0 : s.end + 1] for p in f.players
+                 if self.ids.player(p.track_id) == s.player and p.court_xy is not None]
+        return max(cands, key=lambda p: p.bbox[3]).court_xy if cands else None
+
     def _made(self, frames, fl: Flight, rim: RimObs, zone_hit: int | None) -> tuple[bool, int | None]:
-        """Ball crosses the rim's center line downward, horizontally inside the rim, having been
-        above the rim shortly before. Looks a bit past the flight end (the catch under the basket
-        can start a possession while the ball is still in the net)."""
+        """Ball crosses the rim plane downward near the middle of the rim (seen on both sides of the plane within
+        0.2 s, so a ball lost in the crowd and found again below the rim doesn't count). Looks a bit past the flight end (the catch under the basket can start a possession while the
+        ball is still in the net)."""
         if zone_hit is None:
             return False, None
+        ec = self.cfg.events
         rx1, ry1, rx2, ry2 = rim.bbox
-        cy, w = (ry1 + ry2) / 2, rim.width
+        w = rim.width
+        cy = ry1 + min(ec.make_plane * w, 0.5 * (ry2 - ry1))
+        cx = (rx1 + rx2) / 2
         i0 = fl.start + max(0, zone_hit - 2)
-        i1 = min(len(frames) - 1, fl.end + int(0.5 * self.fps), i0 + int(self.cfg.events.make_window_s * self.fps))
+        i1 = min(len(frames) - 1, fl.end + int(0.5 * self.fps), i0 + int(ec.make_window_s * self.fps))
         seq = [(i, frames[i].ball.xy) for i in range(i0, i1 + 1) if frames[i].ball is not None]
-        last_above = None
         for (ia, a), (ib, b) in zip(seq, seq[1:]):
-            if a[1] < ry1:
-                last_above = ia
-            if a[1] <= cy < b[1] and last_above is not None and ia - last_above <= self.fps:
+            if a[1] <= cy < b[1] and ib - ia <= 0.2 * self.fps:
                 x = a[0] + (b[0] - a[0]) * (cy - a[1]) / max(b[1] - a[1], 1e-6)
-                if rx1 - 0.15 * w <= x <= rx2 + 0.15 * w:
+                if abs(x - cx) <= ec.make_center_tol * w:
                     return True, frames[ib].idx
         return False, None
 

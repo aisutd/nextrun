@@ -1,0 +1,11 @@
+nba_court_kp                         nba        found 63/94  usable 2/94  error ft median 6.55  mean 14.39  p90 30.65
+venue_trackid3x3_drone               fiba       found 22/42  usable 0/42  error ft median 71.24  mean 67.42  p90 89.82
+venue_trackid3x3_indoor              fiba       found 0/1  usable 0/1  error ft median nan  mean nan  p90 nan
+venue_trackid3x3_outdoor             fiba       found 9/22  usable 0/22  error ft median 19.19  mean 22.71  p90 29.35
+{"nba_court_kp": {"court": "nba", "images": 94, "found": 63, "found_rate": 0.67, "good": 2, "good_rate": 0.021, "err_ft_median": 6.55, "err_ft_mean": 14.39, "err_ft_p90": 30.65}, "venue_trackid3x3_drone": {"court": "fiba", "images": 42, "found": 22, "found_rate": 0.524, "good": 0, "good_rate": 0.0, "err_ft_median": 71.24, "err_ft_mean": 67.42, "err_ft_p90": 89.82}, "venue_trackid3x3_indoor": {"court": "fiba", "images": 1, "found": 0, "found_rate": 0.0, "good": 0, "good_rate": 0.0, "err_ft_median": NaN, "err_ft_mean": NaN, "err_ft_p90": NaN}, "venue_trackid3x3_outdoor": {"court": "fiba", "images": 22, "found": 9, "found_rate": 0.409, "good": 0, "good_rate": 0.0, "err_ft_median": 19.19, "err_ft_mean": 22.71, "err_ft_p90": 29.35}}
+/mnt/Data/Tushaar/nextrun/src/scripts/eval_court.py:95: RuntimeWarning: All-NaN slice encountered
+  "err_ft_median": round(float(np.nanmedian(e)), 2), "err_ft_mean": round(float(np.nanmean(e)), 2),
+/mnt/Data/Tushaar/nextrun/src/scripts/eval_court.py:95: RuntimeWarning: Mean of empty slice
+  "err_ft_median": round(float(np.nanmedian(e)), 2), "err_ft_mean": round(float(np.nanmean(e)), 2),
+/mnt/Data/Tushaar/nextrun/.venv-linux/lib/python3.11/site-packages/numpy/lib/_nanfunctions_impl.py:1396: RuntimeWarning: All-NaN slice encountered
+  return _nanquantile_unchecked(

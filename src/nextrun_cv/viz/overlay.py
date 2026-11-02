@@ -7,7 +7,7 @@ import hashlib
 import cv2
 import numpy as np
 
-from ..config import CourtSpec
+from ..config import CourtSpec, FusionConfig
 from ..court import template
 from ..court.base import CourtCalib
 from ..events.analyzer import GameAnalysis
@@ -74,8 +74,11 @@ def render(
     stride: int = 1,
     trail: int = 20,
     caption_s: float = 2.0,
+    motion=None,
 ) -> None:
+    """motion: court.track.CameraMotion for a moving camera (the analysis' ball arcs are in its stabilized view)."""
     by_idx = {f.idx: k for k, f in enumerate(frames)}
+    motion_at = dict(zip(motion.idx, motion.M)) if motion is not None else {}
     flights_at: dict[int, int] = {}
     for fi, fl in enumerate(analysis.flights):
         for k in range(fl.start, fl.end + 1):
@@ -93,6 +96,9 @@ def render(
             if writer is None:
                 writer = VideoWriter(out_path, fps / stride, (img.shape[1], img.shape[0]))
             holder = analysis.holder[k] if k < len(analysis.holder) else None
+            court = calib.at(f.idx) if calib is not None else None
+            if court is not None and court.conf >= FusionConfig.min_court_conf:  # the court as this frame sees it
+                img = draw_court(img, court, (0, 0, 200))
             for r in f.rims:
                 x1, y1, x2, y2 = map(int, r.bbox)
                 cv2.rectangle(img, (x1, y1), (x2, y2), (0, 140, 255), 2)
@@ -115,7 +121,10 @@ def render(
             if fi is not None and analysis.flights[fi].arc is not None:
                 fl = analysis.flights[fi]
                 ts = np.linspace(fl.points[0][1], fl.points[-1][1], 40)
-                curve = fl.arc.eval(ts).astype(np.int32)
+                curve = fl.arc.eval(ts)
+                if f.idx in motion_at:  # stabilized view -> this frame
+                    curve = cv2.perspectiveTransform(curve.reshape(-1, 1, 2).astype(np.float64), motion_at[f.idx]).reshape(-1, 2)
+                curve = curve.astype(np.int32)
                 cv2.polylines(img, [curve], False, (255, 255, 255), 1, cv2.LINE_AA)
             # events -> score + captions
             while ev_ptr < len(events) and events[ev_ptr].frame <= f.idx:

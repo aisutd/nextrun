@@ -14,11 +14,29 @@ data/*
 *.avi
 !tests/fixtures/*.mp4
 
-# training runs and processed games stay local; eval reports in results/ are tracked
-results/runs/
+# processed games stay local; eval reports in results/ are tracked
 results/games/
 results/*.log
+# per-clip eval outputs (videos, tracks) stay local; their summary results/<name>.json is tracked
+results/events_clips*/
+results/tracking_sportsmot*/
+# training runs: weights are saved to weights/; only each run's config and training curves are tracked here
+results/runs/**
+!results/runs/**/
+!results/runs/**/args.yaml
+!results/runs/**/results.csv
+!results/runs/**/results.png
+results/runs/court/smoke/**
+results/runs/detect/**
+# training / eval logs (progress-bar output, MBs each); the findings are in the .md / .txt / .json reports
+results/**/*.log
 
+# weights/: trained models are tracked; stock downloads and superseded (CPU-era) weights stay local
 /yolo*.pt
-yolo*.pt
-models/*.prev.pt
+weights/pretrained/
+weights/**/archive/
+weights/players/*.pt
+/runs/
+
+# raw data archive
+data.zip*

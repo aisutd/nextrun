@@ -5,6 +5,7 @@ A constant-velocity Kalman filter picks the candidate consistent with the trajec
 gaps (occlusion by players / net) are filled by linear interpolation."""
 from __future__ import annotations
 
+import cv2
 import numpy as np
 
 from ..config import BallTrackConfig
@@ -86,6 +87,29 @@ def interpolate_gaps(frames: list[FrameState], max_gap: int) -> None:
             w = k / (gap + 1)
             xy = (1 - w) * pa + w * pb
             frames[a + k].ball = BallObs((float(xy[0]), float(xy[1])), (1 - w) * ra + w * rb, 0.0, interpolated=True)
+
+
+def _warp_box(box, H: np.ndarray) -> tuple[float, float, float, float]:
+    x1, y1, x2, y2 = box
+    p = cv2.perspectiveTransform(np.float32([[x1, y1], [x2, y1], [x1, y2], [x2, y2]]).reshape(-1, 1, 2), H).reshape(-1, 2)
+    return float(p[:, 0].min()), float(p[:, 1].min()), float(p[:, 0].max()), float(p[:, 1].max())
+
+
+def stabilize_rims_moving(frames: list[FrameState], segments: list[int], motion: list[np.ndarray],
+                          size: tuple[int, int], min_support: float = 0.05) -> None:
+    """Moving camera: the rims are still fixed in the world. Undo the camera motion (court.track.CameraMotion:
+    per frame, the shot it belongs to and the homography from the shot's first frame), stabilize each shot's rims
+    there like a fixed camera, and carry them back into every frame (dropping the ones out of view)."""
+    w, h = size
+    for sg in sorted(set(segments)):
+        ks = [k for k, s in enumerate(segments) if s == sg]
+        ref = [FrameState(frames[k].idx, frames[k].t,
+                          rims=[RimObs(_warp_box(r.bbox, np.linalg.inv(motion[k])), r.conf) for r in frames[k].rims])
+               for k in ks]
+        stable = stabilize_rims(ref, min_support)
+        for k in ks:
+            rims = [RimObs(_warp_box(r.bbox, motion[k]), r.conf) for r in stable]
+            frames[k].rims = [r for r in rims if 0 <= r.center[0] < w and 0 <= r.center[1] < h]
 
 
 def stabilize_rims(frames: list[FrameState], min_support: float = 0.05) -> list[RimObs]:

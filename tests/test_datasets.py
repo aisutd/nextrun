@@ -40,7 +40,7 @@ def test_ball_rim_class_names():
 
 def test_projected_court_labels_roundtrip():
     spec = CourtSpec.preset("nba")
-    kp = keypoints_for_court(load_keypoint_config(REPO_ROOT / "models" / "court_keypoints.json"), spec)
+    kp = keypoints_for_court(load_keypoint_config(REPO_ROOT / "weights" / "court" / "court_keypoints.json"), spec)
     lm = template.landmarks(spec)
     names = ["R_base_top", "R_base_bot", "mid_top", "mid_bot"]
     img = np.float32([[1180, 300], [1250, 690], [80, 330], [10, 700]])

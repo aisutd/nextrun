@@ -1,0 +1,2 @@
+sportcenter                          sportcenter found 88/492  usable 31/492  error ft median 7.54  mean 19.72  p90 45.97
+{"sportcenter": {"court": "sportcenter", "images": 492, "found": 88, "found_rate": 0.179, "good": 31, "good_rate": 0.063, "err_ft_median": 7.54, "err_ft_mean": 19.72, "err_ft_p90": 45.97}}

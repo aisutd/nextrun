@@ -1,0 +1,305 @@
+{
+ "jobs": {
+  "court_yolo26m": {
+   "task": "court",
+   "model": "yolo26m-pose.pt",
+   "imgsz": 1280,
+   "epochs": 200,
+   "status": "scored",
+   "report": {
+    "nba_court_kp": {
+     "court": "nba",
+     "images": 94,
+     "found": 94,
+     "found_rate": 1.0,
+     "err_ft_median": 0.21,
+     "err_ft_mean": 0.36,
+     "err_ft_p90": 0.62
+    },
+    "venue_trackid3x3_drone": {
+     "court": "fiba",
+     "images": 42,
+     "found": 2,
+     "found_rate": 0.048,
+     "err_ft_median": 48.33,
+     "err_ft_mean": 44.35,
+     "err_ft_p90": 68.23
+    },
+    "venue_trackid3x3_indoor": {
+     "court": "fiba",
+     "images": 1,
+     "found": 1,
+     "found_rate": 1.0,
+     "err_ft_median": 0.46,
+     "err_ft_mean": 0.68,
+     "err_ft_p90": 1.32
+    },
+    "venue_trackid3x3_outdoor": {
+     "court": "fiba",
+     "images": 22,
+     "found": 22,
+     "found_rate": 1.0,
+     "err_ft_median": 0.15,
+     "err_ft_mean": 0.2,
+     "err_ft_p90": 0.42
+    }
+   },
+   "summary": {
+    "mean_median_ft": 16.23,
+    "min_found": 0.048
+   }
+  },
+  "ball_yolo26m": {
+   "task": "ball",
+   "model": "yolo26m.pt",
+   "imgsz": 1024,
+   "epochs": 120,
+   "status": "running"
+  },
+  "court_finetune": {
+   "task": "court",
+   "model": "models/court_model.pt",
+   "imgsz": 1280,
+   "epochs": 100,
+   "status": "scored",
+   "report": {
+    "nba_court_kp": {
+     "court": "nba",
+     "images": 94,
+     "found": 94,
+     "found_rate": 1.0,
+     "err_ft_median": 0.53,
+     "err_ft_mean": 0.76,
+     "err_ft_p90": 1.43
+    },
+    "venue_trackid3x3_drone": {
+     "court": "fiba",
+     "images": 42,
+     "found": 18,
+     "found_rate": 0.429,
+     "err_ft_median": 77.04,
+     "err_ft_mean": 80.79,
+     "err_ft_p90": 110.63
+    },
+    "venue_trackid3x3_indoor": {
+     "court": "fiba",
+     "images": 1,
+     "found": 1,
+     "found_rate": 1.0,
+     "err_ft_median": 0.84,
+     "err_ft_mean": 1.18,
+     "err_ft_p90": 2.93
+    },
+    "venue_trackid3x3_outdoor": {
+     "court": "fiba",
+     "images": 22,
+     "found": 22,
+     "found_rate": 1.0,
+     "err_ft_median": 0.35,
+     "err_ft_mean": 0.38,
+     "err_ft_p90": 0.6
+    }
+   },
+   "summary": {
+    "mean_median_ft": 25.97,
+    "min_found": 0.429
+   }
+  },
+  "ball_yolo26s": {
+   "task": "ball",
+   "model": "yolo26s.pt",
+   "imgsz": 1024,
+   "epochs": 80,
+   "status": "running"
+  },
+  "court_yolo26l": {
+   "task": "court",
+   "model": "yolo26l-pose.pt",
+   "imgsz": 1280,
+   "epochs": 200,
+   "status": "running"
+  },
+  "ball_yolo26l": {
+   "task": "ball",
+   "model": "yolo26l.pt",
+   "imgsz": 1024,
+   "epochs": 80,
+   "status": "running"
+  }
+ },
+ "refine": {
+  "court": 0,
+  "ball": 0
+ },
+ "baseline": {
+  "court": {
+   "report": {
+    "nba_court_kp": {
+     "court": "nba",
+     "images": 94,
+     "found": 63,
+     "found_rate": 0.67,
+     "err_ft_median": 6.56,
+     "err_ft_mean": 16.63,
+     "err_ft_p90": 34.95
+    },
+    "venue_trackid3x3_drone": {
+     "court": "fiba",
+     "images": 42,
+     "found": 22,
+     "found_rate": 0.524,
+     "err_ft_median": 71.24,
+     "err_ft_mean": 68.11,
+     "err_ft_p90": 89.76
+    },
+    "venue_trackid3x3_indoor": {
+     "court": "fiba",
+     "images": 1,
+     "found": 0,
+     "found_rate": 0.0,
+     "err_ft_median": null,
+     "err_ft_mean": null,
+     "err_ft_p90": null
+    },
+    "venue_trackid3x3_outdoor": {
+     "court": "fiba",
+     "images": 22,
+     "found": 9,
+     "found_rate": 0.409,
+     "err_ft_median": 19.19,
+     "err_ft_mean": 23.55,
+     "err_ft_p90": 29.76
+    }
+   },
+   "summary": {
+    "mean_median_ft": 32.33,
+    "min_found": 0.409
+   }
+  },
+  "ball": {
+   "report": {
+    "test": {
+     "hf_basketball-coco-2025-04-02": {
+      "images": 27,
+      "ball": {
+       "P": 0.521,
+       "R": 0.429,
+       "mAP50": 0.37
+      },
+      "rim": {
+       "P": 1.0,
+       "R": 0.987,
+       "mAP50": 0.995
+      }
+     },
+     "hf_basketball-coco-20260416": {
+      "images": 125,
+      "ball": {
+       "P": 0.878,
+       "R": 0.725,
+       "mAP50": 0.791
+      },
+      "rim": {
+       "P": 1.0,
+       "R": 0.966,
+       "mAP50": 0.995
+      }
+     },
+     "hf_basketball-coco-player-detection": {
+      "images": 42,
+      "ball": {
+       "P": 0.522,
+       "R": 0.317,
+       "mAP50": 0.343
+      },
+      "rim": {
+       "P": 0.943,
+       "R": 1.0,
+       "mAP50": 0.992
+      }
+     },
+     "rf_basketball-1zhpe": {
+      "images": 188,
+      "ball": {
+       "P": 0.642,
+       "R": 0.377,
+       "mAP50": 0.437
+      },
+      "rim": {
+       "P": 0.088,
+       "R": 0.5,
+       "mAP50": 0.074
+      }
+     },
+     "rf_basketball-detection-dn6fg": {
+      "images": 410,
+      "ball": {
+       "P": 0.76,
+       "R": 0.562,
+       "mAP50": 0.62
+      },
+      "rim": {
+       "P": 0.922,
+       "R": 0.951,
+       "mAP50": 0.958
+      }
+     },
+     "rf_basketball-yolo-dataset": {
+      "images": 40,
+      "ball": {
+       "P": 0.0,
+       "R": 0.0,
+       "mAP50": 0.013
+      },
+      "rim": {
+       "P": 0.698,
+       "R": 0.7,
+       "mAP50": 0.645
+      }
+     },
+     "rf_basketball_and_hoops": {
+      "images": 91,
+      "ball": {
+       "P": 0.623,
+       "R": 0.242,
+       "mAP50": 0.317
+      },
+      "rim": {
+       "P": 0.939,
+       "R": 0.391,
+       "mAP50": 0.407
+      }
+     },
+     "rf_rim-detection": {
+      "images": 112,
+      "ball": {
+       "P": 0.525,
+       "R": 0.624,
+       "mAP50": 0.531
+      },
+      "rim": {
+       "P": 0.733,
+       "R": 0.549,
+       "mAP50": 0.555
+      }
+     }
+    },
+    "footage": {
+     "frames": 149,
+     "ball_found": 99,
+     "rim_found": 149,
+     "ball_conf_median": 0.616
+    }
+   },
+   "summary": {
+    "ball_map50": 0.428,
+    "rim_map50": 0.703,
+    "footage_ball": "99/149",
+    "footage_rim": "149/149",
+    "footage_ball_rate": 0.6644295302013423,
+    "footage_rim_rate": 1.0
+   }
+  }
+ },
+ "finalized": false
+}

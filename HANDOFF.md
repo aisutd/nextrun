@@ -5,16 +5,19 @@ Branch: `model_merge` (github.com/aisutd/nextrun). Pick up on a machine with an 
 
 ## Where we are
 
-**Repo layout:** `src/` (package `nextrun_cv`, `scripts/`) · `models/` (weights + configs) ·
+**Repo layout:** `src/` (package `nextrun_cv`, `scripts/`) · `weights/` (weights + configs, one folder per model kind) ·
 `data/` (datasets, local only; `data/venues/` tracked) · `tests/` (48 passing) · `results/` (eval reports).
 
-**Models installed in `models/`** (the pipeline uses these):
+**Active models** (`weights/active.json`; the pipeline uses these):
 
 | Model | Weights | Status |
 |---|---|---|
-| Players (pose + tracking) | `yolo26m-pose.pt` (pretrained, auto-download) | done: drop-in, same 17 keypoints, ~2.5x faster than YOLO11m-pose |
-| Court (24 keypoints) | `court_model.pt` (YOLO11s-pose) | **to retrain on GPU** |
-| Ball + rim | `ball_hoop_model.pt` (YOLOv8n) | **to retrain on GPU** |
+| Players (pose + tracking) | `players/yolo26m-pose.pt` (pretrained, auto-download) | done: drop-in, same 17 keypoints, ~2.5x faster than YOLO11m-pose |
+| Court (24 keypoints) | `court/court_synth.pt` (YOLO26m-pose) | done (GPU, 2026-10-29): usable NBA 0.99 / drone 1.00 / outdoor 1.00; handheld 0.06 |
+| Ball + rim | `ball_hoop/ball_pseudo.pt` (YOLO26l) | done (GPU, 2026-10-29): ball mAP50 0.918, rim 0.837, footage ball 100/149 |
+
+All trained weights: `weights/<kind>/<run>.pt`; training metrics: `results/runs/`; comparison tables in `README.md`; search log in
+`results/autotrain/`.
 
 **Datasets (built by scripts, not stored in git):**
 
@@ -86,19 +89,20 @@ python src/scripts/eval_ball_rim.py --data data/ball_rim --split test | tee resu
 
 # 3. train (resumable: re-run with  --name <run> --resume  after any stop)
 python src/scripts/train.py court --data data/court24/data.yaml --model yolo26m-pose.pt --imgsz 1280 --epochs 200 --workers 4 --no-install --name court_yolo26m
-python src/scripts/train.py court --data data/court24/data.yaml --model models/court_model.pt --imgsz 1280 --epochs 100 --workers 4 --no-install --name court_finetune
+python src/scripts/train.py court --data data/court24/data.yaml --model weights/court/archive/court_yolo11s_original.pt --imgsz 1280 --epochs 100 --workers 4 --no-install --name court_finetune
 python src/scripts/train.py ball  --data data/ball_rim/data.yaml --model yolo26m.pt --imgsz 1024 --epochs 120 --workers 4 --no-install --name ball_yolo26m
 
 # 4. score the new models
 for r in court_yolo26m court_finetune; do
-  python src/scripts/eval_court.py --data data/court24 --split test --weights results/runs/court/$r/weights/best.pt | tee results/${r}_test.txt
+  python src/scripts/eval_court.py --data data/court24 --split test --weights weights/court/$r.pt | tee results/${r}_test.txt
 done
-python src/scripts/eval_ball_rim.py --data data/ball_rim --split test --weights results/runs/ball/ball_yolo26m/weights/best.pt | tee results/ball_yolo26m_test.txt
+python src/scripts/eval_ball_rim.py --data data/ball_rim --split test --weights weights/ball_hoop/ball_yolo26m.pt | tee results/ball_yolo26m_test.txt
 python src/scripts/check_ball_footage.py $T/outdoor/IMG_0105.MOV $T/outdoor/IMG_0110.MOV $T/indoor/basket_S3T2_pre.mp4 $T/indoor/basket_S5T4_post.mp4 \
-  --weights models/ball_hoop_model.pt results/runs/ball/ball_yolo26m/weights/best.pt --save results/ball_disagreements | tee results/ball_footage.txt
+  --weights weights/ball_hoop/ball_pseudo.pt weights/ball_hoop/ball_yolo26m.pt --save results/ball_disagreements | tee results/ball_footage.txt
 ```
 
-**5. Install rules** (copy `best.pt` over the file in `models/`; keep the old one as `*.prev.pt`):
+**5. Install rules** (`install_weights()` in `nextrun_cv.config` / `train.py` without `--no-install`: saves
+`weights/<kind>/<run>.pt` and points `weights/active.json` at it; the old file stays):
 
 - **Court:** a candidate must find the court at least as often (−2 % tolerance) and be at least as accurate as
   the current model on **every** test source, the drone court included. Among the candidates that pass, the
@@ -114,8 +118,8 @@ python src/scripts/check_ball_footage.py $T/outdoor/IMG_0105.MOV $T/outdoor/IMG_
   `python -m nextrun_cv run data/videos/outdoor_0025_0045.mp4 -o results/games/outdoor --venue trackid3x3_outdoor`
 - Write `results/REPORT.md`: methodology, datasets, models, evaluation, results. Describe the current state
   only; don't narrate the history.
-- Commit the reports and push. Commit installed weights too: `models/*.pt` are tracked, `yolo*.pt` downloads
-  are not.
+- Commit the reports and push. Commit the new weights too: `weights/<kind>/*.pt` are tracked; datasets,
+  logs, stock downloads and `archive/` are not.
 
 ## Later (more accuracy)
 
