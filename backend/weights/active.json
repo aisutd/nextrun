@@ -1,0 +1,5 @@
+{
+  "players": "players/yolo26m-pose.pt",
+  "ball_hoop": "ball_hoop/ball_pseudo.pt",
+  "court": "court/court_synth.pt"
+}

@@ -1,0 +1,18 @@
+# BoT-SORT for a moving camera (broadcast, handheld, drone): botsort_reid.yaml plus camera-motion
+# compensation, so a pan does not look like every player jumping at once.
+# Tuned on SportsMOT basketball val (src/scripts/eval_tracking.py, results/tracker_sweep/):
+# - match_thresh 0.9 / track_buffer 150: a player found again after an occlusion still matches the lost track
+# - with_reid False: Ultralytics' built-in appearance features made ids worse (more switches) on uniforms;
+#   identity.stitch joins the remaining lost tracks offline
+tracker_type: botsort
+track_high_thresh: 0.3
+track_low_thresh: 0.1
+new_track_thresh: 0.4
+track_buffer: 150
+match_thresh: 0.9
+fuse_score: True
+gmc_method: sparseOptFlow
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+with_reid: False
+model: auto
