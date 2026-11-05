@@ -1,0 +1,17 @@
+export const fonts = {
+  Inter_400: require("../../assets/fonts/Inter_400.ttf"),
+  Inter_500: require("../../assets/fonts/Inter_500.ttf"),
+  Inter_600: require("../../assets/fonts/Inter_600.ttf"),
+  Montserrat_600: require("../../assets/fonts/Montserrat_600.ttf"),
+  Montserrat_700: require("../../assets/fonts/Montserrat_700.ttf"),
+  Montserrat_800: require("../../assets/fonts/Montserrat_800.ttf"),
+  Montserrat_700Italic: require("../../assets/fonts/Montserrat_700Italic.ttf"),
+  Montserrat_800Italic: require("../../assets/fonts/Montserrat_800Italic.ttf"),
+  JetBrainsMono_500: require("../../assets/fonts/JetBrainsMono_500.ttf"),
+  BebasNeue: require("../../assets/fonts/BebasNeue.ttf"),
+  Orbitron: require("../../assets/fonts/Orbitron.ttf"),
+  Rajdhani: require("../../assets/fonts/Rajdhani.ttf"),
+  Oswald: require("../../assets/fonts/Oswald.ttf"),
+  RussoOne: require("../../assets/fonts/RussoOne.ttf"),
+  PlayfairDisplay: require("../../assets/fonts/PlayfairDisplay.ttf"),
+};
