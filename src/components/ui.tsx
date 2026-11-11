@@ -140,14 +140,20 @@ export function Button({
       ]}
     >
       {primary && (
+        <View
+          pointerEvents="none"
+          style={[
+            StyleSheet.absoluteFillObject,
+            { borderRadius: 15, overflow: "hidden" },
+          ]}
+        >
         <Image
           source={assets["primary"]}
-          style={[
-            StyleSheet.absoluteFill,
-            { width: undefined, height: undefined, borderRadius: 15 },
-          ]}
-        />
-      )}
+          resizeMode="stretch"
+          style={{ width: "100%", height: "100%" }}
+      />
+      </View>
+    )}
       <Row style={{ justifyContent: "center" }}>
         {typeof children === "string" ? (
           <T
