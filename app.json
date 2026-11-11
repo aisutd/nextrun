@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "NextRun",
+    "slug": "nextrun",
+    "scheme": "nextrun",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nextrun.app"
+    },
+    "android": {
+      "package": "com.nextrun.app",
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "bundler": "metro",
+      "name": "NextRun"
+    },
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a photo for your NextRun player card or club logo."
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}
