@@ -1,0 +1,179 @@
+{
+  "onboarding": [
+    {
+      "t": "",
+      "h": "YOUR JOURNEY BUILDS <span class=\"or\">LEGENDS</span>",
+      "p": "AI-powered basketball analytics, training, and community."
+    },
+    {
+      "t": "MORE<br>THAN<br>BASKETBALL",
+      "h": "ANALYZE. IMPROVE. <span class=\"or\">CONNECT.</span>",
+      "p": "The next generation of basketball performance and community."
+    },
+    {
+      "t": "",
+      "h": "BETTER PLAYERS BUILD STRONGER <span class=\"or\">COMMUNITIES</span>",
+      "p": "Train. Track. Compete. Together."
+    },
+    {
+      "t": "PLAY<br>ANALYZE<br>IMPROVE<br>CONNECT",
+      "h": "THE <span class=\"or\">NEXT RUN</span> STARTS HERE",
+      "p": "Your game. Your data. Your community."
+    }
+  ],
+  "styles": [
+    ["Orange", "#FF6A00", "#0A0A0A", 0],
+    ["Ruby", "#E11D2E", "#14090B", 1],
+    ["Sapphire", "#2D6BFF", "#060B1F", 2],
+    ["Emerald", "#10B981", "#04140E", 3],
+    ["Amethyst", "#9B4DFF", "#10061F", 0],
+    ["Gold", "#F5B301", "#1A1203", 1],
+    ["Diamond", "#22D3EE", "#071A24", 2],
+    ["Onyx", "#A7ADB8", "#050506", 3]
+  ],
+  "shapes": {
+    "Standard": {
+      "d": "M0 0H200L224 24V310H24L0 286Z",
+      "ip": 16,
+      "it": 16,
+      "ib": 18,
+      "al": "e"
+    },
+    "Rounded": {
+      "d": "M46 0H178A46 46 0 0 1 224 46V264A46 46 0 0 1 178 310H46A46 46 0 0 1 0 264V46A46 46 0 0 1 46 0Z",
+      "ip": 26,
+      "it": 26,
+      "ib": 26,
+      "al": "e"
+    },
+    "Arch": {
+      "d": "M0 112A112 112 0 0 1 224 112V292A18 18 0 0 1 206 310H18A18 18 0 0 1 0 292Z",
+      "ip": 26,
+      "it": 62,
+      "ib": 22,
+      "al": "e"
+    },
+    "Shield": {
+      "d": "M0 0H224V217L112 310L0 217Z",
+      "ip": 34,
+      "it": 16,
+      "ib": 96,
+      "al": "c"
+    },
+    "Hex": {
+      "d": "M27 0H197L224 28V282L197 310H27L0 282V28Z",
+      "ip": 32,
+      "it": 26,
+      "ib": 30,
+      "al": "e"
+    },
+    "Slant": {
+      "d": "M36 0H224V260L188 310H0V50Z",
+      "ip": 20,
+      "it": 52,
+      "ib": 46,
+      "al": "e"
+    },
+    "Tech": {
+      "d": "M0 19L22 0H202L224 19V291L202 310H22L0 291Z",
+      "ip": 24,
+      "it": 26,
+      "ib": 26,
+      "al": "e"
+    }
+  },
+  "fonts": [
+    "Montserrat",
+    "Bebas Neue",
+    "Orbitron",
+    "Rajdhani",
+    "Oswald",
+    "Russo One",
+    "Playfair Display",
+    "Inter",
+    "JetBrains Mono"
+  ],
+  "patterns": [
+    "Hex",
+    "Circuit",
+    "Stripes",
+    "Waves",
+    "Dots",
+    "Court",
+    "Scales",
+    "Carbon",
+    "Burst",
+    "Grid"
+  ],
+  "config": {
+    "tiers": [
+      {
+        "k": "D",
+        "min": 55,
+        "max": 69,
+        "blurb": "Lower-production profiles and role-player comparisons"
+      },
+      {
+        "k": "C",
+        "min": 70,
+        "max": 79,
+        "blurb": "Established rotation players and developing starters"
+      },
+      {
+        "k": "B",
+        "min": 80,
+        "max": 89,
+        "blurb": "High-level starters and standout specialists"
+      },
+      {
+        "k": "A",
+        "min": 90,
+        "max": 99,
+        "blurb": "Elite stars and all-time greats"
+      }
+    ],
+    "attrs": [
+      {
+        "k": "ppg",
+        "label": "PPG",
+        "unit": "points per game",
+        "pct": false
+      },
+      {
+        "k": "apg",
+        "label": "APG",
+        "unit": "assists per game",
+        "pct": false
+      },
+      {
+        "k": "rpg",
+        "label": "RPG",
+        "unit": "rebounds per game",
+        "pct": false
+      },
+      {
+        "k": "tp",
+        "label": "3PT%",
+        "unit": "three-point percentage",
+        "pct": true
+      },
+      {
+        "k": "fg",
+        "label": "FG%",
+        "unit": "field-goal percentage",
+        "pct": true
+      }
+    ],
+    "weights": {
+      "ppg": 1,
+      "apg": 1,
+      "rpg": 1,
+      "tp": 1,
+      "fg": 1
+    },
+    "focusBoost": 2,
+    "minAttrs": 3,
+    "lowSampleGames": 100,
+    "requireVerified": true
+  }
+}

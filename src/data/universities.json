@@ -1,0 +1,317 @@
+[
+  {
+    "id": "ut-austin",
+    "name": "The University of Texas at Austin",
+    "short": "UT Austin",
+    "city": "Austin, TX",
+    "c1": "#BF5700",
+    "c2": "#1a0d00",
+    "asset": "art/uni-ut-austin.jpeg"
+  },
+  {
+    "id": "texas-am",
+    "name": "Texas A&M University",
+    "short": "Texas A&M",
+    "city": "College Station, TX",
+    "c1": "#500000",
+    "c2": "#140000",
+    "asset": "art/uni-texas-am.jpeg"
+  },
+  {
+    "id": "rice",
+    "name": "Rice University",
+    "short": "Rice",
+    "city": "Houston, TX",
+    "c1": "#00205B",
+    "c2": "#050a1c",
+    "asset": "art/uni-rice.jpeg"
+  },
+  {
+    "id": "smu",
+    "name": "Southern Methodist University",
+    "short": "SMU",
+    "city": "Dallas, TX",
+    "c1": "#CC0035",
+    "c2": "#14050b",
+    "asset": "art/uni-smu.jpeg"
+  },
+  {
+    "id": "baylor",
+    "name": "Baylor University",
+    "short": "Baylor",
+    "city": "Waco, TX",
+    "c1": "#154734",
+    "c2": "#061711",
+    "asset": "art/uni-baylor.jpeg"
+  },
+  {
+    "id": "tcu",
+    "name": "Texas Christian University",
+    "short": "TCU",
+    "city": "Fort Worth, TX",
+    "c1": "#4D1979",
+    "c2": "#10061c",
+    "asset": "art/uni-tcu.jpeg"
+  },
+  {
+    "id": "utd",
+    "name": "The University of Texas at Dallas",
+    "short": "UT Dallas",
+    "city": "Richardson, TX",
+    "c1": "#E87500",
+    "c2": "#1a0d00",
+    "asset": "art/uni-utd.jpeg"
+  },
+  {
+    "id": "houston",
+    "name": "University of Houston",
+    "short": "UH",
+    "city": "Houston, TX",
+    "c1": "#C8102E",
+    "c2": "#14050a",
+    "asset": "art/uni-houston.jpeg"
+  },
+  {
+    "id": "texas-tech",
+    "name": "Texas Tech University",
+    "short": "Texas Tech",
+    "city": "Lubbock, TX",
+    "c1": "#CC0000",
+    "c2": "#140505",
+    "asset": "art/uni-texas-tech.jpeg"
+  },
+  {
+    "id": "trinity",
+    "name": "Trinity University",
+    "short": "Trinity",
+    "city": "San Antonio, TX",
+    "c1": "#7A1F2B",
+    "c2": "#14070a",
+    "asset": "art/uni-trinity.jpeg"
+  },
+  {
+    "id": "utsa",
+    "name": "The University of Texas at San Antonio",
+    "short": "UTSA",
+    "city": "San Antonio, TX",
+    "c1": "#F15A22",
+    "c2": "#0a2240",
+    "asset": "art/uni-utsa.jpeg"
+  },
+  {
+    "id": "uta",
+    "name": "The University of Texas at Arlington",
+    "short": "UT Arlington",
+    "city": "Arlington, TX",
+    "c1": "#0064B1",
+    "c2": "#04101c",
+    "asset": "art/uni-uta.jpeg"
+  },
+  {
+    "id": "unt",
+    "name": "University of North Texas",
+    "short": "UNT",
+    "city": "Denton, TX",
+    "c1": "#00853E",
+    "c2": "#04140b",
+    "asset": "art/uni-unt.jpeg"
+  },
+  {
+    "id": "texas-state",
+    "name": "Texas State University",
+    "short": "Texas State",
+    "city": "San Marcos, TX",
+    "c1": "#501214",
+    "c2": "#120405",
+    "asset": "art/uni-texas-state.jpeg"
+  },
+  {
+    "id": "st-thomas",
+    "name": "University of St. Thomas",
+    "short": "St. Thomas",
+    "city": "Houston, TX",
+    "c1": "#4B2E83",
+    "c2": "#0e0718",
+    "asset": "art/uni-st-thomas.jpeg"
+  },
+  {
+    "id": "st-edwards",
+    "name": "St. Edward's University",
+    "short": "St. Edward's",
+    "city": "Austin, TX",
+    "c1": "#1B3A6B",
+    "c2": "#050c1c",
+    "asset": "art/uni-st-edwards.jpeg"
+  },
+  {
+    "id": "u-dallas",
+    "name": "University of Dallas",
+    "short": "UD",
+    "city": "Irving, TX",
+    "c1": "#002B5C",
+    "c2": "#04101c",
+    "asset": "art/uni-u-dallas.jpeg"
+  },
+  {
+    "id": "tamucc",
+    "name": "Texas A&M University-Corpus Christi",
+    "short": "TAMU-CC",
+    "city": "Corpus Christi, TX",
+    "c1": "#0067C5",
+    "c2": "#04101c",
+    "asset": "art/uni-tamucc.jpeg"
+  },
+  {
+    "id": "sam-houston",
+    "name": "Sam Houston State University",
+    "short": "Sam Houston",
+    "city": "Huntsville, TX",
+    "c1": "#F47B20",
+    "c2": "#1a0d00",
+    "asset": "art/uni-sam-houston.jpeg"
+  },
+  {
+    "id": "sfa",
+    "name": "Stephen F. Austin State University",
+    "short": "SFA",
+    "city": "Nacogdoches, TX",
+    "c1": "#582C83",
+    "c2": "#0e0718",
+    "asset": "art/uni-sfa.jpeg"
+  },
+  {
+    "id": "pvamu",
+    "name": "Prairie View A&M University",
+    "short": "Prairie View A&M",
+    "city": "Prairie View, TX",
+    "c1": "#4F2D7F",
+    "c2": "#0e0718",
+    "asset": "art/uni-pvamu.jpeg"
+  },
+  {
+    "id": "texas-southern",
+    "name": "Texas Southern University",
+    "short": "Texas Southern",
+    "city": "Houston, TX",
+    "c1": "#7A0019",
+    "c2": "#14050a",
+    "asset": "art/uni-texas-southern.jpeg"
+  },
+  {
+    "id": "tarleton",
+    "name": "Tarleton State University",
+    "short": "Tarleton State",
+    "city": "Stephenville, TX",
+    "c1": "#4F2D7F",
+    "c2": "#0e0718",
+    "asset": "art/uni-tarleton.jpeg"
+  },
+  {
+    "id": "dbu",
+    "name": "Dallas Baptist University",
+    "short": "DBU",
+    "city": "Dallas, TX",
+    "c1": "#003A70",
+    "c2": "#04101c",
+    "asset": "art/uni-dbu.jpeg"
+  },
+  {
+    "id": "utep",
+    "name": "The University of Texas at El Paso",
+    "short": "UTEP",
+    "city": "El Paso, TX",
+    "c1": "#FF8200",
+    "c2": "#1a0d00",
+    "asset": "art/uni-utep.jpeg"
+  },
+  {
+    "id": "utrgv",
+    "name": "The University of Texas Rio Grande Valley",
+    "short": "UTRGV",
+    "city": "Edinburg, TX",
+    "c1": "#F05023",
+    "c2": "#1a0d00",
+    "asset": "art/uni-utrgv.jpeg"
+  },
+  {
+    "id": "ut-tyler",
+    "name": "The University of Texas at Tyler",
+    "short": "UT Tyler",
+    "city": "Tyler, TX",
+    "c1": "#00205B",
+    "c2": "#050a1c",
+    "asset": "art/uni-ut-tyler.jpeg"
+  },
+  {
+    "id": "utpb",
+    "name": "The University of Texas Permian Basin",
+    "short": "UTPB",
+    "city": "Odessa, TX",
+    "c1": "#F47B20",
+    "c2": "#1a0d00",
+    "asset": "art/uni-utpb.jpeg"
+  },
+  {
+    "id": "tamu-commerce",
+    "name": "East Texas A&M University",
+    "short": "East Texas A&M",
+    "city": "Commerce, TX",
+    "c1": "#003DA5",
+    "c2": "#04101c",
+    "asset": "art/uni-tamu-commerce.jpeg"
+  },
+  {
+    "id": "twu",
+    "name": "Texas Woman's University",
+    "short": "TWU",
+    "city": "Denton, TX",
+    "c1": "#7A0019",
+    "c2": "#14050a",
+    "asset": "art/uni-twu.jpeg"
+  },
+  {
+    "id": "acu",
+    "name": "Abilene Christian University",
+    "short": "ACU",
+    "city": "Abilene, TX",
+    "c1": "#4F2D7F",
+    "c2": "#0e0718",
+    "asset": "art/uni-acu.jpeg"
+  },
+  {
+    "id": "hcu",
+    "name": "Houston Christian University",
+    "short": "HCU",
+    "city": "Houston, TX",
+    "c1": "#0A3D91",
+    "c2": "#04101c",
+    "asset": "art/uni-hcu.jpeg"
+  },
+  {
+    "id": "lamar",
+    "name": "Lamar University",
+    "short": "Lamar",
+    "city": "Beaumont, TX",
+    "c1": "#CC0000",
+    "c2": "#140505",
+    "asset": "art/uni-lamar.jpeg"
+  },
+  {
+    "id": "uiw",
+    "name": "University of the Incarnate Word",
+    "short": "UIW",
+    "city": "San Antonio, TX",
+    "c1": "#CC0000",
+    "c2": "#140505",
+    "asset": "art/uni-uiw.jpeg"
+  },
+  {
+    "id": "angelo",
+    "name": "Angelo State University",
+    "short": "Angelo State",
+    "city": "San Angelo, TX",
+    "c1": "#0033A0",
+    "c2": "#04101c",
+    "asset": "art/uni-angelo.jpeg"
+  }
+]
