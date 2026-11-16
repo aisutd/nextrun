@@ -40,7 +40,7 @@ from nextrun_cv.video import ffmpeg_exe, probe, read_frame
 log = logging.getLogger("nextrun.api")
 DATA_DIR = Path(os.environ.get("NEXTRUN_DATA", REPO_ROOT / "results" / "games"))
 # Speed / accuracy trade-off for uploads (override with env vars):
-MAX_SECONDS = float(os.environ.get("NEXTRUN_MAX_SECONDS", 40))  # only the first N seconds of a video are analysed
+MAX_SECONDS = float(os.environ.get("NEXTRUN_MAX_SECONDS", 40))  # analyze the first 40 seconds by default
 TARGET_FPS = float(os.environ.get("NEXTRUN_TARGET_FPS", 15))  # analyse ~15 frames/s (every 2nd frame of a 30 fps clip)
 MAX_IMGSZ = int(os.environ.get("NEXTRUN_MAX_IMGSZ", 1280))  # ball/rim model input long side; 4K frames are shrunk to this
 PLAYER_IMGSZ = int(os.environ.get("NEXTRUN_PLAYER_IMGSZ", 1920))  # preserve detail for distant players in wide outdoor footage
@@ -209,8 +209,11 @@ def _fast_config(cfg: Config, video: str) -> None:
     except Exception:  # noqa: BLE001  (unreadable video: the pipeline reports the real error)
         return
     cfg.stride = max(1, round(fps / TARGET_FPS))
-    cfg.max_frames = max(1, int(MAX_SECONDS * fps / cfg.stride))
-    log.info("analysing the first %.0f s of the video (%d frames at stride %d)", MAX_SECONDS, cfg.max_frames, cfg.stride)
+    cfg.max_frames = max(1, int(MAX_SECONDS * fps / cfg.stride)) if MAX_SECONDS > 0 else None
+    if MAX_SECONDS > 0:
+        log.info("analysing the first %.0f s of the video (%d frames at stride %d)", MAX_SECONDS, cfg.max_frames, cfg.stride)
+    else:
+        log.info("analysing the full video (%d fps sampling, stride %d)", TARGET_FPS, cfg.stride)
     cfg.models.max_imgsz, cfg.models.ball_max_imgsz = PLAYER_IMGSZ, MAX_IMGSZ
     cfg.court_calib_frames = min(cfg.court_calib_frames, 6)
     cfg.models.device = _best_device()
