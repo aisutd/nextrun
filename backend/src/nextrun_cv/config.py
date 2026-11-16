@@ -163,7 +163,8 @@ class EventConfig:
     shot_max_dist_m: float = 14.0  # nobody shoots from further than this from the basket (when the court is known)
     shot_min_rise_frac: float = 0.15  # ball must rise this fraction of shooter bbox height after release
     airball_max_rim_dist: float = 4.0  # flight peaking above rim within this many rim widths -> attempt
-    assist_window_s: float = 3.0
+    # assist: the scorer caught a teammate's pass at most this long before the shot (dribbling in is fine)
+    assist_window_s: float = 6.0
     assist_max_dribbles: int = 2
     dunk_release_rim_dist: float = 1.5  # release within this many rim widths of the rim
     dribble_min_amp: float = 0.15  # bounce amplitude as fraction of holder bbox height
@@ -301,7 +302,10 @@ class Config:
 
     @classmethod
     def load(cls, path: str | Path) -> "Config":
-        return cls.from_dict(json.loads(Path(path).read_text()))
+        cfg = cls.from_dict(json.loads(Path(path).read_text()))
+        if cfg.events.assist_window_s == 3.0:  # the old default saved with earlier uploads: too short, missed assists
+            cfg.events.assist_window_s = EventConfig.assist_window_s
+        return cfg
 
 
 def _from_dict(cls, d: dict):

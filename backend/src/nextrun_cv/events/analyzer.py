@@ -128,15 +128,26 @@ class GameAnalyzer:
         return out
 
     def _assist(self, out, frames, segs, si, shot_ev: Event, last_pass_to, dribbles_in) -> None:
+        """The last pass to the scorer gets an assist. The scorer's possession is often split into several segments
+        (the ball is briefly lost behind a body), so walk back through the scorer's own consecutive segments to the
+        pass that started them, as long as the catch came within `assist_window_s` of the shot."""
         s = segs[si]
-        pass_ev = last_pass_to.get(si)
-        if (
-            pass_ev is not None
-            and frames[s.end].t - frames[s.start].t <= self.cfg.events.assist_window_s
-            and dribbles_in.get(si, 0) <= self.cfg.events.assist_max_dribbles
-        ):
-            out.events.append(Event("assist", pass_ev.frame, pass_ev.t, pass_ev.player, pass_ev.team,
-                                    {"to": s.player, "shot_frame": shot_ev.frame}))
+        k = si
+        while k > 0 and k not in last_pass_to and segs[k - 1].player == s.player:
+            k -= 1
+        pass_ev = last_pass_to.get(k)
+        if pass_ev is None or pass_ev.player in (None, s.player):
+            return
+        if pass_ev.team is not None and shot_ev.team is not None and pass_ev.team != shot_ev.team:
+            return
+        if shot_ev.t - frames[segs[k].start].t > self.cfg.events.assist_window_s:
+            return
+        if any(e.type == "assist" and e.data.get("shot_frame") == shot_ev.frame for e in out.events):
+            return
+        make_frame = shot_ev.data.get("make_frame") or shot_ev.frame
+        out.events.append(Event("assist", pass_ev.frame, pass_ev.t, pass_ev.player, pass_ev.team or shot_ev.team,
+                                {"to": s.player, "shot_frame": shot_ev.frame, "make_frame": make_frame,
+                                 "points": shot_ev.data.get("points")}))
 
     # ---------------------------------------------------------------------------------------------
     def _transition(self, out, frames, s: Segment, nxt: Segment, flight: Flight | None, si, last_pass_to) -> None:
