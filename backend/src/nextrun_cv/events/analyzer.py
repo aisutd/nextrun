@@ -74,6 +74,9 @@ class GameAnalyzer:
         if self.calib is not None:  # a CourtCalib, or a CourtTrack with a court per frame
             fusion.annotate_players([f for f in frames if fusion.frame_court(self.calib, f.idx, self.cfg.fusion)],
                                     self.calib)
+        if self.ids.excluded:  # people marked as not playing never hold the ball, rebound or score
+            frames = [replace(f, players=[p for p in f.players if self.ids.player(p.track_id) not in self.ids.excluded])
+                      for f in frames]
         segs = compute_possession(frames, lambda tid: self.ids.player(tid), self.cfg.possession, self.fps)
         out.segments = segs
         out.holder = [None] * len(frames)

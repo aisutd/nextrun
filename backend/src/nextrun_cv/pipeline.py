@@ -170,8 +170,9 @@ def load_court(out: Path, spec) -> CourtTrack | None:
     return track
 
 
-def run_analysis(out: Path, cfg: Config, tags=None) -> tuple[GameAnalysis, Identities, list[FrameState], object]:
-    """Events from a detect + calibrate output dir, without writing anything (analyze() saves them)."""
+def identify(out: Path, cfg: Config, tags=None):
+    """Who is who, without events: (identities, frames, court, fps, embeddings, view, view_court). frames are fused
+    with the court (off-court people dropped when the court is reliable) and lost tracks are stitched."""
     frames = load_frames(out / "tracks.json.gz")
     vinfo = json.loads((out / "video.json").read_text())
     fps = vinfo["fps"] / vinfo.get("stride", 1)
@@ -189,6 +190,12 @@ def run_analysis(out: Path, cfg: Config, tags=None) -> tuple[GameAnalysis, Ident
     if vinfo.get("moving_camera") and (out / "camera_motion.json").exists():
         view, view_court = stabilize_view(frames, calib, CameraMotion.load(out / "camera_motion.json"))
     ids = resolve_identities(view, emb, tags, cfg.teams.n_teams, fps=fps, max_other_share=cfg.teams.max_other_share)
+    return ids, frames, calib, fps, emb, view, view_court
+
+
+def run_analysis(out: Path, cfg: Config, tags=None) -> tuple[GameAnalysis, Identities, list[FrameState], object]:
+    """Events from a detect + calibrate output dir, without writing anything (analyze() saves them)."""
+    ids, frames, calib, fps, _emb, view, view_court = identify(out, cfg, tags)
     analysis = GameAnalyzer(cfg, fps, ids, view_court).analyze(view)
     overrides = load_overrides(out / "overrides.json")  # the person's corrections ("count this basket", "not a basket")
     if overrides:

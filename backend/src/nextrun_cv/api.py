@@ -25,7 +25,7 @@ import numpy as np
 import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from nextrun_cv import pipeline
@@ -407,15 +407,218 @@ def tagging_frame(game_id: str):
     return FileResponse(p, media_type="image/jpeg")
 
 
+def _team_selection_frame(game_id: str, time_s: float):
+    """Return the nearest analyzed frame with normalized player boxes for the team picker."""
+    d = _dir(game_id)
+    tracks = d / "tracks.json.gz"
+    if not tracks.exists():
+        raise HTTPException(409, "video analysis is not finished yet")
+    frames = pipeline.load_frames(tracks)
+    if not frames:
+        raise HTTPException(409, "no analyzed frames are available")
+    # A single sampled frame can miss a player due to blur or occlusion. Pick the clearest frame
+    # near the requested time, then union real tracked identities from nearby samples so a brief
+    # missed detection doesn't make a player impossible to assign.
+    target = max(0.0, time_s)
+    nearby = [f for f in frames if abs(f.t - target) <= 2.0]
+    frame = max(nearby or frames, key=lambda f: (len(f.players), -abs(f.t - target)))
+    info = json.loads((d / "video.json").read_text())
+    width, height = int(info["width"]), int(info["height"])
+    spans = {}
+    for f in frames:
+        for p in f.players:
+            spans[p.track_id] = spans.get(p.track_id, 0) + 1
+    # Use the closest box for each identity within half a second of the displayed image.
+    # Track IDs are global, so selecting these still tags the same player for scoring.
+    observed = {}
+    for candidate in frames:
+        if abs(candidate.t - frame.t) > 0.5:
+            continue
+        for p in candidate.players:
+            old = observed.get(p.track_id)
+            if old is None or abs(candidate.t - frame.t) < abs(old[0] - frame.t):
+                observed[p.track_id] = (candidate.t, p)
+    players = [
+        {"track_id": p.track_id, "name": f"Player {p.track_id}", "frames_seen": spans.get(p.track_id, 1),
+         "bbox": [p.bbox[0] / width, p.bbox[1] / height, p.bbox[2] / width, p.bbox[3] / height]}
+        for _, p in observed.values()
+    ]
+    return d, frame, (width, height), players
+
+
+@app.get("/games/{game_id}/team-selection")
+def team_selection(game_id: str, time_s: float = 0.0):
+    d, frame, (width, height), players = _team_selection_frame(game_id, time_s)
+    info = json.loads((d / "video.json").read_text())
+    duration_s = info["n_frames"] / max(1.0, info["fps"])
+    return {"time_s": frame.t, "duration_s": duration_s, "width": width, "height": height,
+            "players": players}
+
+
+@app.get("/games/{game_id}/team-selection/frame")
+def team_selection_frame(game_id: str, time_s: float = 0.0):
+    d, frame, (width, height), players = _team_selection_frame(game_id, time_s)
+    img = read_frame(str(d / "video.mp4"), frame.idx)
+    scale = min(1.0, 1600 / max(img.shape[:2]))
+    if scale < 1:
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    for player in players:
+        x1, y1, x2, y2 = player["bbox"]
+        x1, x2 = round(x1 * img.shape[1]), round(x2 * img.shape[1])
+        y1, y2 = round(y1 * img.shape[0]), round(y2 * img.shape[0])
+        cv2.rectangle(img, (x1, y1), (x2, y2), (0, 220, 255), max(2, round(img.shape[1] / 800)))
+        cv2.rectangle(img, (x1, max(0, y1 - 34)), (x1 + 94, y1), (8, 15, 28), -1)
+        cv2.putText(img, f"ID {player['track_id']}", (x1 + 5, max(20, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX,
+                    max(0.55, img.shape[1] / 2200), (255, 255, 255), 2, cv2.LINE_AA)
+    ok, encoded = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    if not ok:
+        raise HTTPException(500, "could not render the selected frame")
+    return Response(encoded.tobytes(), media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+def _team_roster(game_id: str) -> tuple[Path, list[dict]]:
+    """Every person tracked anywhere in the analysed video (not just one frame), grouped into identities the same way
+    the stats are (lost tracks stitched, re-linked by appearance), with whether they were on the court, the current
+    team (a saved choice, else the jersey-colour guess) and the frame with their clearest full-body box."""
+    from nextrun_cv import fusion
+
+    d = _dir(game_id)
+    if not (d / "tracks.json.gz").exists():
+        raise HTTPException(409, "video analysis is not finished yet")
+    cfg = Config.load(d / "config.json")
+    ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg)
+    tags = json.loads((d / "tags.json").read_text()) if (d / "tags.json").exists() else {}
+    info = json.loads((d / "video.json").read_text())
+    W, H = int(info["width"]), int(info["height"])
+    groups: dict[str, dict] = {}
+    for f in frames:
+        for p in f.players:
+            name = ids.player(p.track_id)
+            g = groups.setdefault(name, {"tracks": set(), "n": 0, "on": 0, "mapped": 0, "best": None, "first_t": f.t})
+            g["tracks"].add(p.track_id)
+            g["n"] += 1
+            if p.court_xy is not None:
+                g["mapped"] += 1
+                g["on"] += fusion.on_court(p.court_xy, calib.spec if calib is not None else cfg.court, 0.5, cfg.fusion.play_area)
+            # clearest view: a tall, confident box that is not cut off by the frame edge
+            x1, y1, x2, y2 = p.bbox
+            edge = x1 <= 2 or y1 <= 2 or x2 >= W - 2 or y2 >= H - 2
+            score = p.height * p.conf * (0.5 if edge else 1.0)
+            if g["best"] is None or score > g["best"][0]:
+                g["best"] = (score, f.idx, p.track_id, p.bbox)
+    min_n = max(5, int(0.02 * len(frames)))
+    out = []
+    for name, g in groups.items():
+        if g["n"] < min_n:
+            continue  # a flicker of a detection, not a person
+        on_court = g["on"] / g["mapped"] >= 0.5 if g["mapped"] >= 5 else None
+        tag = next((tags[str(t)] for t in sorted(g["tracks"]) if str(t) in tags), None)
+        if tag is not None:
+            team, saved = tag.get("team"), True
+        else:
+            team, saved = (ids.player_team.get(name) if on_court is not False else None), False
+        _, fidx, tid, bbox = g["best"]
+        out.append({"key": min(g["tracks"]), "name": name, "track_ids": sorted(g["tracks"]), "frames_seen": g["n"],
+                    "seen_s": round(g["n"] / max(1e-6, _fps), 1), "first_s": round(g["first_t"], 1),
+                    "on_court": on_court, "team": team, "saved": saved,
+                    "thumb_frame": fidx, "thumb_bbox": [round(v, 1) for v in bbox]})
+    out.sort(key=lambda r: (r["on_court"] is False, -r["frames_seen"]))
+    return d, out
+
+
+@app.get("/games/{game_id}/team-roster")
+def team_roster(game_id: str):
+    """Players for the team picker: everyone seen in the video, on-court people first."""
+    d, players = _team_roster(game_id)
+    return {"players": players, "has_court": (d / "court_track.json").exists() or (d / "court.json").exists()}
+
+
+@app.get("/games/{game_id}/team-roster/thumb")
+def team_roster_thumb(game_id: str, frame: int, x1: float, y1: float, x2: float, y2: float):
+    """A cut-out of one player (their clearest frame) for the team picker card."""
+    d = _dir(game_id)
+    cache = d / "thumbs" / f"{frame}_{int(x1)}_{int(y1)}_{int(x2)}_{int(y2)}.jpg"
+    if not cache.exists():
+        try:
+            img = read_frame(str(d / "video.mp4"), int(frame))
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(409, f"cannot read the video: {e}")
+        h, w = img.shape[:2]
+        bw, bh = x2 - x1, y2 - y1
+        # a little context around the box, as a 3:4 portrait
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        ch = bh * 1.25
+        cw = max(bw * 1.4, ch * 0.75)
+        a, b = int(max(0, cx - cw / 2)), int(max(0, cy - ch / 2))
+        c, e_ = int(min(w, cx + cw / 2)), int(min(h, cy + ch / 2))
+        if c <= a or e_ <= b:
+            raise HTTPException(422, "empty crop")
+        crop = img[b:e_, a:c]
+        s_ = 320 / crop.shape[0]
+        crop = cv2.resize(crop, None, fx=s_, fy=s_, interpolation=cv2.INTER_AREA if s_ < 1 else cv2.INTER_CUBIC)
+        cache.parent.mkdir(exist_ok=True)
+        cv2.imwrite(str(cache), crop, [cv2.IMWRITE_JPEG_QUALITY, 88])
+    return FileResponse(cache, media_type="image/jpeg", headers={"Cache-Control": "max-age=86400"})
+
+
+@app.get("/games/{game_id}/roster")
+def get_roster(game_id: str):
+    """Tracked people with their current names and auto/manual team guesses for the upload editor."""
+    d = _dir(game_id)
+    tracks = d / "tracks.json.gz"
+    if not tracks.exists():
+        raise HTTPException(409, "detection has not finished yet")
+    from nextrun_cv.identity.tagging import track_spans
+
+    identities = json.loads((d / "identities.json").read_text()) if (d / "identities.json").exists() else {}
+    tags = json.loads((d / "tags.json").read_text()) if (d / "tags.json").exists() else {}
+    names = identities.get("track_to_player", {})
+    player_teams = identities.get("player_team", {})
+    frames = pipeline.load_frames(tracks)
+    spans = track_spans(frames)
+    players = []
+    for track_id, span in sorted(spans.items(), key=lambda item: (item[1].start, item[0])):
+        if span.n < 5:
+            continue
+        tag = tags.get(str(track_id), {})
+        name = tag.get("name") or names.get(str(track_id)) or f"Player {track_id}"
+        players.append({
+            "track_id": track_id,
+            "name": name,
+            "team": tag.get("team") if "team" in tag else player_teams.get(name),
+            "frames_seen": span.n,
+            "tagged": bool(tag),
+        })
+    return {"players": players}
+
+
+def _render_tagged_game(game_id: str, cfg: Config, analysis, ids, frames) -> None:
+    """Refresh the annotated video after team/player tags change, without running any detection models again."""
+    d = DATA_DIR / game_id
+    video = str(d / "video.mp4")
+    try:
+        (d / "annotated_web.mp4").unlink(missing_ok=True)
+        raw = pipeline.render(video, str(d), cfg, analysis, ids, frames)
+        if ffmpeg_exe() is None:
+            _web_video(raw, d / "annotated_web.mp4")
+        _set_status(d, status="done", progress=1.0, has_video=True, render_error=None, video_version=time.time())
+    except Exception as e:  # noqa: BLE001
+        log.warning("game %s: render after roster update failed: %s", game_id, e)
+        _set_status(d, status="done", progress=1.0, has_video=False, render_error=str(e)[:300])
+
+
 @app.put("/games/{game_id}/tags")
-def set_tags(game_id: str, tags: dict[str, Tag]):
+def set_tags(game_id: str, tags: dict[str, Tag], background: BackgroundTasks):
     """{track_id: {name, team}} -> re-runs analysis (cheap, no re-detection) and returns the new stats."""
     d = _dir(game_id)
     if not (d / "tracks.json.gz").exists():
         raise HTTPException(409, "detection has not finished yet")
     (d / "tags.json").write_text(json.dumps({k: v.model_dump() for k, v in tags.items()}, indent=2))
-    pipeline.analyze(str(d), Config.load(d / "config.json"))
-    return get_stats(game_id)
+    cfg = Config.load(d / "config.json")
+    analysis, ids, frames = pipeline.analyze(str(d), cfg)
+    _set_status(d, status="rendering", progress=0.95, has_video=False, render_error=None)
+    background.add_task(_render_tagged_game, game_id, cfg, analysis, ids, frames)
+    return get_summary(game_id)
 
 
 @app.get("/games/{game_id}/stats")

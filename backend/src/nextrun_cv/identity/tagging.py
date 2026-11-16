@@ -81,6 +81,8 @@ def tagging_sheet(frame: np.ndarray, state: FrameState) -> np.ndarray:
 class Identities:
     track_to_player: dict[int, str] = field(default_factory=dict)
     player_team: dict[str, str] = field(default_factory=dict)
+    # people the user marked as not playing (spectators, referees, someone at the court edge): no stats, not drawn
+    excluded: set[str] = field(default_factory=set)
 
     def player(self, tid: int | None) -> str | None:
         if tid is None:
@@ -92,7 +94,8 @@ class Identities:
         return None if p is None else self.player_team.get(p)
 
     def to_dict(self) -> dict:
-        return {"track_to_player": {str(k): v for k, v in self.track_to_player.items()}, "player_team": self.player_team}
+        return {"track_to_player": {str(k): v for k, v in self.track_to_player.items()}, "player_team": self.player_team,
+                "excluded": sorted(self.excluded)}
 
 
 def resolve_identities(
@@ -110,12 +113,15 @@ def resolve_identities(
 
     # 1) user tags
     members: dict[str, list[int]] = {}
+    explicitly_unassigned: set[str] = set()
     for tid, tag in tags.items():
         name = tag.get("name") or f"player{tid}"
         ids.track_to_player[tid] = name
         members.setdefault(name, []).append(tid)
         if tag.get("team"):
             ids.player_team[name] = str(tag["team"])
+        elif "team" in tag:
+            explicitly_unassigned.add(name)
 
     # 2) re-link untagged tracks to tagged identities (in time order)
     if members:
@@ -141,11 +147,16 @@ def resolve_identities(
                 ids.track_to_player[tid] = best
                 members[best].append(tid)
 
-    # 2b) everyone else gets a stable default name by first appearance, so every person has stats of their own
-    k = 0
+    # 2b) everyone else gets a stable default name from their track id ("Player 7" is track 7), so the name in the
+    # video is the one the team picker shows, and every person has stats of their own
+    used_names = set(ids.track_to_player.values())
     for tid in sorted((t for t in spans if t not in ids.track_to_player), key=lambda t: (spans[t].start, -spans[t].n)):
-        k += 1
-        ids.track_to_player[tid] = f"Player {k}"
+        name, k = f"Player {tid}", 1
+        while name in used_names:
+            k += 1
+            name = f"Player {tid}-{k}"
+        ids.track_to_player[tid] = name
+        used_names.add(name)
 
     # 3) teams for everyone: seed clustering with tagged teams if available
     seeds: dict[str, list[np.ndarray]] = {}
@@ -157,10 +168,12 @@ def resolve_identities(
                                  {t: spans[t].n for t in spans}, max_other_share)
     for tid in spans:
         name = ids.player(tid)
-        if name not in ids.player_team and tid in team_of_track:
+        if name not in ids.player_team and name not in explicitly_unassigned and tid in team_of_track:
             # majority vote across this identity's tracks
             votes = [team_of_track[t] for t, n in ids.track_to_player.items() if n == name and t in team_of_track] or [team_of_track[tid]]
             ids.player_team[name] = max(set(votes), key=votes.count)
+    # a tag with "team": null marks a person as not playing, unless another of their tracks names a team
+    ids.excluded = {n for n in explicitly_unassigned if n not in ids.player_team}
     return ids
 
 
