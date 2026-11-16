@@ -29,7 +29,7 @@ const STAGE: Record<GameStatus["status"], number> = {
 };
 // One row per model / stage in the backend pipeline (nextrun_cv.pipeline).
 const MODELS = [
-  { key: "players", icon: "🏃", name: "Player pose + tracking", sub: "finds and follows every player", stage: 0 },
+  { key: "players", icon: "🏃", name: "Full-body pose + tracking", sub: "finds and follows players through the clip", stage: 0 },
   { key: "ball", icon: "🏀", name: "Ball + rim detector", sub: "finds the ball and the hoops", stage: 0 },
   { key: "court", icon: "📐", name: "Court keypoints", sub: "fits the court lines", stage: 1 },
   { key: "events", icon: "⚡", name: "Fusion + events", sub: "shots · rebounds · assists · points", stage: 2 },
@@ -42,14 +42,16 @@ const INK = "#0B1220",
 
 function detail(key: string, g: GameStatus): string {
   const n = Math.max(1, g.frames_done);
-  if (key === "players") return `${g.max_players} players tracked`;
-  if (key === "ball")
-    return `ball in ${Math.round((100 * g.ball_frames) / n)}% of frames · rim in ${Math.round((100 * g.rim_frames) / n)}%`;
+  if (key === "players") return g.max_players > 0 ? `${g.max_players} full-body tracks in one frame` : "No stable player tracks found; check framing and lighting";
+  if (key === "ball") {
+    const ballPct = Math.round((100 * g.ball_frames) / n), rimPct = Math.round((100 * g.rim_frames) / n);
+    return `ball in ${ballPct}% of frames · hoop in ${rimPct}%${ballPct < 35 ? " · low ball visibility" : ""}`;
+  }
   if (key === "court")
     return g.court_method === "estimate"
-      ? "court estimated from the scene"
+      ? "court estimated from the scene; verify the lines"
       : g.court_calibrated
-        ? `court locked${g.court_conf != null ? ` · conf ${g.court_conf.toFixed(2)}` : ""}`
+        ? `${(g.court_conf ?? 0) < 0.5 ? "weak court fit" : "court mapped"}${g.court_conf != null ? ` · conf ${g.court_conf.toFixed(2)}` : ""}`
         : "looking for the court";
   if (key === "events") return "scoring every shot, per player";
   return "boxes, names, points, ball trail";
