@@ -168,6 +168,8 @@ class EventConfig:
     dunk_release_rim_dist: float = 1.5  # release within this many rim widths of the rim
     dribble_min_amp: float = 0.15  # bounce amplitude as fraction of holder bbox height
     rebound_window_s: float = 6.0
+    # rebound by a direct look at the ball after a miss: ball (below the rim) within this many body heights of a hand
+    rebound_touch_dist: float = 0.35
     # --- a rebound only follows a real missed shot (a pass that happens to fly near the hoop is just a pass) ------
     # a missed shot's ball got up to the rim: its highest point is at most this many rim widths below the rim top
     miss_min_apex_w: float = 0.5

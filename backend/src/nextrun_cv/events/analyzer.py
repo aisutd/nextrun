@@ -9,7 +9,7 @@ made shot after a pass within the assist window ──► assist
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 from scipy.signal import find_peaks
@@ -21,7 +21,7 @@ from ..court.base import CourtCalib
 from ..identity.tagging import Identities
 from ..schema import Event, FrameState, RimObs
 from .flight import Flight, build_flight, fit_arc
-from .possession import Segment, compute_possession
+from .possession import Segment, compute_possession, hand_distance, in_control
 
 RIM_DIAMETER_M = 0.457
 
@@ -117,8 +117,8 @@ class GameAnalyzer:
                 if shot["made"]:
                     self._last_make = (ev.t, shot["rim"])
                     self._assist(out, frames, segs, si, ev, last_pass_to, dribbles_in)
-                if not shot["made"] and nxt is not None:
-                    self._rebound(out, frames, segs[si + 1:], ev)
+                if not shot["made"]:
+                    self._rebound(out, frames, segs[si + 1:], ev, f_end)
                 continue
             if nxt is not None:
                 self._transition(out, frames, s, nxt, flight, si, last_pass_to)
@@ -159,27 +159,76 @@ class GameAnalyzer:
             out.events.append(ev)
             last_pass_to[si + 1] = ev
 
-    def _rebound(self, out, frames, after: list[Segment], miss: Event) -> None:
-        nxt = after[0]
-        t0 = frames[nxt.start].t
-        if t0 - miss.t > self.cfg.events.rebound_window_s:
+    def _rebound(self, out, frames, after: list[Segment], miss: Event, f_end: int) -> None:
+        """Credit the first player who secures the ball after a missed shot comes off the rim.
+
+        Two sources, earliest wins: the next possession segment, and a direct look at the ball as it comes down
+        (`_first_touch`). The direct look matters because a rebounder often pulls the ball into their body, where
+        the ball detector loses it before the possession logic has seen enough frames to start a segment."""
+        ec = self.cfg.events
+        rim_t = miss.data.get("rim_t") if miss.data.get("rim_t") is not None else miss.t
+        nxt = after[0] if after else None
+        cand = None  # (frame-list index, player)
+        if nxt is not None and frames[nxt.start].t - rim_t <= ec.rebound_window_s and self._plausible_rebound_window(frames, nxt, miss):
+            cand = (nxt.start, nxt.player)
+        stop = nxt.start if nxt is not None else len(frames) - 1
+        touch = self._first_touch(frames, miss, rim_t, stop)
+        if touch is not None and (cand is None or touch[0] < cand[0]):
+            cand = touch
+        if cand is None:
             return
-        if not self._plausible_rebound(frames, nxt, miss):
-            return
-        team = self.ids.player_team.get(nxt.player)
-        held: dict[str, float] = {}
-        for s in after:
-            if frames[s.start].t > t0 + self.cfg.events.rebound_control_s:
-                break
-            tm = self.ids.player_team.get(s.player)
-            if tm is not None:
-                held[tm] = held.get(tm, 0.0) + frames[s.end].t - frames[s.start].t + 1 / self.fps
-        if held and max(held, key=held.get) != team:
-            team = max(held, key=held.get)
-            nxt = next(s for s in after if self.ids.player_team.get(s.player) == team)
+        i, player = cand
+        team = self.ids.player_team.get(player)
         offensive = team is not None and team == miss.team
-        out.events.append(Event("rebound", frames[nxt.start].idx, frames[nxt.start].t, nxt.player, team,
-                                {"offensive": offensive, "shot_frame": miss.frame}))
+        out.events.append(Event("rebound", frames[i].idx, frames[i].t, player, team,
+                                {"offensive": offensive, "shot_frame": miss.frame,
+                                 "source": "touch" if touch is not None and cand == touch else "possession"}))
+
+    def _plausible_rebound_window(self, frames, nxt: Segment, miss: Event) -> bool:
+        """The next holder after a miss is the rebounder when they got it within the rebound window after the
+        rim; the miss itself must have reached a rim."""
+        if miss.data.get("rim") is None:
+            return False
+        rim_t = miss.data.get("rim_t")
+        t0 = frames[nxt.start].t
+        return rim_t is None or -0.3 <= t0 - rim_t <= self.cfg.events.rebound_window_s
+
+    def _first_touch(self, frames, miss: Event, rim_t: float, stop: int) -> tuple[int, str] | None:
+        """First player to secure the ball after it comes off the rim: the ball, below the rim, is at a player's hands
+        (or inside their box) and either stays there on the next sighting or disappears into their body."""
+        ec = self.cfg.events
+        rim = miss.data.get("rim")
+        if rim is None:
+            return None
+        rim_bottom = rim[3]
+        t_max = rim_t + ec.rebound_window_s
+        start = next((i for i, f in enumerate(frames) if f.t >= rim_t + 0.15), None)
+        if start is None:
+            return None
+        hold_gap = max(2, int(round(0.5 * self.fps)))
+        for i in range(start, min(stop, len(frames) - 1) + 1):
+            f = frames[i]
+            if f.t > t_max:
+                break
+            if f.ball is None or f.ball.xy[1] < rim_bottom or not f.players:
+                continue
+            p = min(f.players, key=lambda p: hand_distance(f.ball.xy, p))
+            close = hand_distance(f.ball.xy, p) <= ec.rebound_touch_dist or in_control(f.ball.xy, p, 0.0)
+            if not close:
+                continue
+            name = self.ids.player(p.track_id)
+            # confirm: the next sighting (within hold_gap frames) is still with this player, or the ball vanished
+            confirmed = True
+            for j in range(i + 1, min(len(frames), i + hold_gap + 1)):
+                g = frames[j]
+                if g.ball is None:
+                    continue
+                q = next((q for q in g.players if self.ids.player(q.track_id) == name), None)
+                confirmed = q is not None and (hand_distance(g.ball.xy, q) <= 2 * ec.rebound_touch_dist or in_control(g.ball.xy, q, 0.15))
+                break
+            if confirmed:
+                return i, name
+        return None
 
     def _doubtful_miss(self, shot: dict) -> bool:
         """A miss we are not sure was thrown at the rim: an airball, or a path that only just reached it."""
@@ -195,11 +244,9 @@ class GameAnalyzer:
         t0 = frames[nxt.start].t
         if rim_t is not None and not (-0.3 <= t0 - rim_t <= ec.rebound_after_rim_s):
             return False
-        p = next((p for p in frames[nxt.start].players if self.ids.player(p.track_id) == nxt.player), None)
-        if p is None:
-            return False
-        w = max(1.0, rim[2] - rim[0])
-        return abs(p.center[0] - (rim[0] + rim[2]) / 2) <= ec.rebound_max_rim_dist * w
+        # The first tracked controller after a shot is the rebounder. Don't require a good
+        # rim/player geometry match here: wide-angle cameras and a weak court fit often shift it.
+        return t0 - miss.t <= ec.rebound_window_s
 
     # ---------------------------------------------------------------------------------------------
     def _dribbles(self, frames: list[FrameState], s: Segment) -> list[int]:
