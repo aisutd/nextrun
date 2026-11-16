@@ -486,8 +486,15 @@ def _team_roster(game_id: str) -> tuple[Path, list[dict]]:
     if not (d / "tracks.json.gz").exists():
         raise HTTPException(409, "video analysis is not finished yet")
     cfg = Config.load(d / "config.json")
-    ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg)
     tags = json.loads((d / "tags.json").read_text()) if (d / "tags.json").exists() else {}
+    ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg)
+    if tags:
+        # saved picks cover every track of every player; a track they don't name means the tracking was improved since
+        # (e.g. a swapped id got split), so the old picks no longer line up: start again from the colour guesses
+        tracks_now = {p.track_id for f in frames for p in f.players}
+        if any(str(t) not in tags for t in tracks_now if sum(1 for f in frames for p in f.players if p.track_id == t) >= 5):
+            tags = {}
+            ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg, tags={})
     info = json.loads((d / "video.json").read_text())
     W, H = int(info["width"]), int(info["height"])
     groups: dict[str, dict] = {}

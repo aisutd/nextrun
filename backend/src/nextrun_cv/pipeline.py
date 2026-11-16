@@ -30,6 +30,7 @@ from .detect.ball_track import drop_implausible_rims, stabilize_rims, stabilize_
 from .events.analyzer import GameAnalysis, GameAnalyzer
 from .events.overrides import apply_overrides, load_overrides
 from .identity.appearance import AppearanceBank
+from .identity.split import split_swapped_tracks
 from .identity.stitch import stitch_tracks
 from .identity.tagging import Identities, best_tagging_frame, load_tags, resolve_identities, tagging_sheet
 from .schema import FrameState, frames_from_records, frames_to_records
@@ -171,6 +172,23 @@ def load_court(out: Path, spec) -> CourtTrack | None:
     return track
 
 
+def _color_samples(out: Path, vinfo: dict, frames: list[FrameState]) -> dict:
+    """{track id: [(source frame, torso colour)]} for the swap splitter; made once per game, then cached."""
+    path = out / "appearance_samples.json.gz"
+    if path.exists():
+        with gzip.open(path, "rt") as fh:
+            return {int(k): v for k, v in json.load(fh).items()}
+    video = out / "video.mp4" if (out / "video.mp4").exists() else Path(vinfo.get("path", ""))
+    if not video.exists():
+        return {}
+    from .identity.appearance import sample_track_colors
+
+    samples = sample_track_colors(str(video), frames)
+    with gzip.open(path, "wt") as fh:
+        json.dump({str(k): v for k, v in samples.items()}, fh)
+    return samples
+
+
 def identify(out: Path, cfg: Config, tags=None):
     """Who is who, without events: (identities, frames, court, fps, embeddings, view, view_court). frames are fused
     with the court (off-court people dropped when the court is reliable) and lost tracks are stitched."""
@@ -178,6 +196,17 @@ def identify(out: Path, cfg: Config, tags=None):
     vinfo = json.loads((out / "video.json").read_text())
     fps = vinfo["fps"] / vinfo.get("stride", 1)
     emb = {int(k): np.asarray(v) for k, v in json.loads((out / "appearance.json").read_text()).items()}
+    # re-run the (cheap, offline) ball / rim clean-up on the stored detections, so improvements apply to old uploads
+    n_rims = drop_implausible_rims(frames)
+    if n_rims:
+        log.info("rims: dropped %d impossible rim boxes", n_rims)
+    track_ball(frames, cfg.ball)
+    # a tracker id that jumped to another player mid-clip is cut into one track per player (by torso colour over time)
+    samples = _color_samples(out, vinfo, frames)
+    if samples:
+        split = split_swapped_tracks(frames, samples, emb)
+        if split:
+            log.info("identity: split %d swapped track(s): %s", len(split), split)
     calib = load_court(out, cfg.court)
     report = fusion.fuse(frames, calib, cfg)
     log.info("fusion: %s", report)

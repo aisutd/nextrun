@@ -73,3 +73,34 @@ def _iou(a, b) -> float:
     inter = ix * iy
     union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
     return inter / union if union > 0 else 0.0
+
+
+def sample_track_colors(video: str, frames, every: int = 3) -> dict[int, list[tuple[int, list[float]]]]:
+    """Torso colour of every clearly visible player over time: {track id: [(source frame, embedding), ...]}, from every
+    `every`-th analysed frame. Used to catch a tracker id that jumps from one player to another mid-clip."""
+    want = {f.idx: f for f in frames[::max(1, every)]}
+    if not want:
+        return {}
+    out: dict[int, list] = defaultdict(list)
+    cap = cv2.VideoCapture(str(video))
+    last = max(want)
+    i = 0
+    try:
+        while i <= last:
+            if i in want:
+                ok, img = cap.read()
+                if not ok:
+                    break
+                ps = want[i].players
+                for p in ps:
+                    if any(q is not p and _iou(p.bbox, q.bbox) > 0.1 for q in ps):
+                        continue  # overlapping: the crop would mix two jerseys
+                    crop = torso_crop(img, p)
+                    if crop is not None:
+                        out[p.track_id].append((i, color_embedding(crop).round(4).tolist()))
+            elif not cap.grab():
+                break
+            i += 1
+    finally:
+        cap.release()
+    return dict(out)
