@@ -26,9 +26,14 @@ NAMED = {  # BGR; teams are often named after jersey colours
 }
 
 
+TEAM_AB = {"a": (238, 211, 34), "b": (60, 146, 251)}  # BGR of the app's Team A cyan / Team B orange
+
+
 def team_color(team: str | None) -> tuple[int, int, int]:
     if team is None:
         return (200, 200, 200)
+    if team.lower() in TEAM_AB:
+        return TEAM_AB[team.lower()]
     if team.lower() in NAMED:
         return NAMED[team.lower()]
     return PALETTE[int(hashlib.md5(team.encode()).hexdigest(), 16) % len(PALETTE)]
@@ -140,36 +145,53 @@ def _player_box(img, p, col, t, holder: bool) -> None:
                 cv2.line(img, (int(kp[a][0]), int(kp[a][1])), (int(kp[b][0]), int(kp[b][1])), (255, 255, 255), t(1), cv2.LINE_AA)
 
 
-def _scoreboard(img, f, score: dict, pts: dict, ids, m: float) -> None:
+def _scoreboard(img, f, score: dict, reb: dict, ast: dict, ids, m: float, flash: dict | None = None) -> None:
+    """Team score card: one row per team with points, rebounds and assists so far. `flash` = {(team, stat): 0..1}
+    briefly highlights a number that just changed."""
     t = lambda v: int(round(v * m))  # noqa: E731
-    teams = sorted(set(score) | {t_ for t_ in ids.player_team.values() if t_}) or ["A", "B"]
-    top = []  # no per-player point lines on the video: only the team score
-    w, h = t(300), t(52) + t(40) * len(teams) + (t(30) * len(top) + t(14) if top else 0)
+    teams = sorted({tm for tm in (set(score) | set(reb) | set(ast) | set(ids.player_team.values())) if tm and tm != "?"}) or ["A", "B"]
+    flash = flash or {}
+    w, h = t(360), t(52) + t(20) + t(40) * len(teams)
     x0, y0 = t(14), t(14)
     _box(img, x0, y0, x0 + w, y0 + h, (22, 18, 16), 0.82)
     cv2.circle(img, (x0 + t(20), y0 + t(24)), t(6), (60, 60, 235), -1, cv2.LINE_AA)
     cv2.putText(img, "LIVE  " + f"{int(f.t // 60)}:{int(f.t % 60):02d}", (x0 + t(36), y0 + t(31)), FONT, 0.6 * m, (235, 235, 235), t(1), cv2.LINE_AA)
     cv2.putText(img, "NEXTRUN", (x0 + w - t(112), y0 + t(31)), FONT, 0.6 * m, (0, 165, 255), t(1), cv2.LINE_AA)
+    # column headers
+    cols = [("PTS", x0 + w - t(150)), ("REB", x0 + w - t(92)), ("AST", x0 + w - t(40))]
     y = y0 + t(52)
+    for name, cx in cols:
+        (tw, _), _ = cv2.getTextSize(name, FONT, 0.42 * m, t(1))
+        cv2.putText(img, name, (cx - tw // 2, y + t(12)), FONT, 0.42 * m, (160, 160, 160), t(1), cv2.LINE_AA)
+    y += t(20)
     for tm in teams:
         col = team_color(tm)
         cv2.rectangle(img, (x0 + t(14), y + t(4)), (x0 + t(22), y + t(34)), col, -1)
-        cv2.putText(img, f"Team {tm}", (x0 + t(34), y + t(30)), FONT, 0.8 * m, (255, 255, 255), t(1), cv2.LINE_AA)
-        sc = str(score.get(tm, 0))
-        (tw, _), _ = cv2.getTextSize(sc, FONT, 1.3 * m, t(2))
-        cv2.putText(img, sc, (x0 + w - t(18) - tw, y + t(33)), FONT, 1.3 * m, (255, 255, 255), t(2), cv2.LINE_AA)
+        cv2.putText(img, f"Team {tm}", (x0 + t(34), y + t(28)), FONT, 0.75 * m, (255, 255, 255), t(1), cv2.LINE_AA)
+        for (name, cx), val, big in zip(cols, (score.get(tm, 0), reb.get(tm, 0), ast.get(tm, 0)), (True, False, False)):
+            sc = str(val)
+            fs, th = (1.2, 2) if big else (0.8, 1)
+            (tw, tt), _ = cv2.getTextSize(sc, FONT, fs * m, t(th))
+            a = flash.get((tm, name), 0.0)
+            if a > 0:  # glow behind a number that just went up
+                _box(img, cx - tw // 2 - t(8), y + t(2), cx + tw // 2 + t(8), y + t(36), (0, 165, 255), 0.25 + 0.5 * a)
+            cv2.putText(img, sc, (cx - tw // 2, y + t(19) + tt // 2), FONT, fs * m, (255, 255, 255), t(th), cv2.LINE_AA)
         y += t(40)
-    if top:
-        cv2.line(img, (x0 + t(14), y + t(2)), (x0 + w - t(14), y + t(2)), (90, 90, 90), t(1), cv2.LINE_AA)
-        y += t(8)
-        for name, v in top:
-            col = team_color(ids.player_team.get(name))
-            cv2.circle(img, (x0 + t(20), y + t(14)), t(5), col, -1, cv2.LINE_AA)
-            cv2.putText(img, name, (x0 + t(34), y + t(20)), FONT, 0.6 * m, (230, 230, 230), t(1), cv2.LINE_AA)
-            vs = f"{v} PTS"
-            (tw, _), _ = cv2.getTextSize(vs, FONT, 0.6 * m, t(1))
-            cv2.putText(img, vs, (x0 + w - t(18) - tw, y + t(20)), FONT, 0.6 * m, (0, 215, 255), t(1), cv2.LINE_AA)
-            y += t(30)
+
+
+def _event_timeline(events, fps: float) -> list[tuple[int, str, object]]:
+    """(source frame, kind, event) for everything the video counts, in order: a basket counts when the ball goes
+    through the hoop, a rebound when it is secured, an assist together with the basket it set up."""
+    out = []
+    for e in events:
+        if e.type == "shot" and e.data.get("made"):
+            out.append((int(e.data.get("make_frame") or e.frame), "score", e))
+        elif e.type == "rebound":
+            out.append((int(e.frame), "rebound", e))
+        elif e.type == "assist":
+            out.append((int(e.data.get("make_frame") or e.data.get("shot_frame") or e.frame), "assist", e))
+    out.sort(key=lambda x: (x[0], x[1] != "score"))
+    return out
 
 
 def render(
@@ -201,10 +223,14 @@ def render(
     for fi, fl in enumerate(analysis.flights):
         for k in range(fl.start, fl.end + 1):
             flights_at[k] = fi
-    events = sorted(analysis.events, key=lambda e: e.frame)
+    timeline = _event_timeline(analysis.events, fps)
     score: dict[str, int] = {}
-    pts: dict[str, int] = {}
+    reb: dict[str, int] = {}
+    ast: dict[str, int] = {}
     ev_ptr = 0
+    show = max(1, round(2.2 * fps))  # how long a REBOUND / ASSIST call stays on screen (source frames)
+    calls: list[tuple[int, str, str | None, str | None, str | None]] = []  # (frame, label, player, team, detail)
+    changed: dict[tuple[str, str], int] = {}  # (team, stat) -> source frame it last went up
     writer = None
     try:
         for idx, img in iter_frames(video_path, stride=1, max_frames=idxs[-1] + 1):
@@ -219,15 +245,24 @@ def render(
             if writer is None:
                 size = (int(W0 / m) // 2 * 2, int(H0 / m) // 2 * 2)
                 writer = make_writer(out_path, fps, size)
-            # events up to now -> running team score and each player's points
-            while ev_ptr < len(events) and events[ev_ptr].frame <= f.idx:
-                e = events[ev_ptr]
-                if e.type == "shot" and e.data.get("made"):
-                    pt = int(e.data.get("points", 2))
-                    score[e.team or "?"] = score.get(e.team or "?", 0) + pt
-                    if e.player:
-                        pts[e.player] = pts.get(e.player, 0) + pt
+            # events up to now -> running team points, rebounds and assists
+            while ev_ptr < len(timeline) and timeline[ev_ptr][0] <= idx:
+                at, kind, e = timeline[ev_ptr]
+                tm = e.team or ids.player_team.get(e.player) or "?"
+                if kind == "score":
+                    score[tm] = score.get(tm, 0) + int(e.data.get("points", 2))
+                    changed[(tm, "PTS")] = at
+                elif kind == "rebound":
+                    reb[tm] = reb.get(tm, 0) + 1
+                    changed[(tm, "REB")] = at
+                    calls.append((at, "OFF. REBOUND" if e.data.get("offensive") else "REBOUND", e.player, tm, None))
+                elif kind == "assist":
+                    ast[tm] = ast.get(tm, 0) + 1
+                    changed[(tm, "AST")] = at
+                    calls.append((at, "ASSIST", e.player, tm, e.data.get("to")))
                 ev_ptr += 1
+            calls = [c for c in calls if idx - c[0] <= show]
+            callout = {c[2]: c for c in calls if c[2]}  # player -> their latest call, shown over their head
             holder = analysis.holder[k] if k < len(analysis.holder) else None
             court = calib.at(fk.idx) if calib is not None else None
             if court is not None:  # always draw the best court we have; an estimate is tagged as one below
@@ -235,10 +270,13 @@ def render(
                 img = cv2.addWeighted(lines, 0.6, img, 0.4, 0)
             for r in f.rims:
                 x1, y1, x2, y2 = map(int, r.bbox)
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 140, 255), t(2), cv2.LINE_AA)
+                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 140, 255), t(3), cv2.LINE_AA)
+                _pill(img, f"RIM {r.conf:.0%}", x1, max(0, y1 - t(26)), (0, 100, 210), 0.48, 1, m, pad=4)
             # players: ring under the feet in the team colour, name tag with running points
             for p in f.players:
                 name = ids.player(p.track_id)
+                if name in ids.excluded:
+                    continue  # marked as not playing in the team picker
                 col = team_color(ids.player_team.get(name))
                 x1, y1, x2, y2 = map(int, p.bbox)
                 _player_box(img, p, col, t, name == holder)
@@ -248,6 +286,12 @@ def render(
                     cv2.ellipse(img, (cx, y2), (rw + t(6), max(t(5), rw // 3 + t(3))), 0, 0, 360, (0, 165, 255), t(2), cv2.LINE_AA)
                 label = name or "?"
                 _pill(img, label, x1, max(0, y1 - t(30)), col, 0.5, 1, m, pad=4)
+                c = callout.get(name)
+                if c is not None:  # "REBOUND" / "ASSIST" over the player who just made the play, with a pop-in
+                    age = (idx - c[0]) / show
+                    sc = 0.62 * (1.25 - 0.25 * min(1.0, age * 6))
+                    _pill(img, c[1], x1, max(0, y1 - t(64)), (0, 165, 255), sc, 2, m, fg=(255, 255, 255), pad=5, alpha=0.95)
+                    cv2.ellipse(img, (cx, y2), (rw + t(10), max(t(6), rw // 3 + t(6))), 0, 0, 360, (0, 165, 255), t(3), cv2.LINE_AA)
             # ball: fading trail (thicker and brighter towards the ball) and a soft glow
             tr = []  # newest sightings of the current unbroken stretch: a gap or a jump ends the trail
             for j in range(k, max(0, k - trail) - 1, -1):
@@ -272,6 +316,14 @@ def render(
                     cv2.circle(glow, (bx - gx1, by - gy1), br * 2, (0, 190, 255), -1, cv2.LINE_AA)
                     cv2.addWeighted(glow, 0.3, roi, 0.7, 0, roi)
                 cv2.circle(img, (bx, by), br, (0, 255, 255), t(2), cv2.LINE_AA)
+            elif f.ball_candidates:
+                # Keep the raw ball detector visible when the temporal tracker cannot join a sighting
+                # to the current flight. The lower confidence mark helps distinguish it from a track.
+                candidate = max(f.ball_candidates, key=lambda b: b.conf)
+                bx, by = map(int, candidate.xy)
+                br = max(t(7), int(candidate.radius))
+                cv2.circle(img, (bx, by), br, (0, 255, 255), t(2), cv2.LINE_AA)
+                _pill(img, f"BALL? {candidate.conf:.0%}", bx + br, max(0, by - br - t(24)), (0, 135, 185), 0.42, 1, m, pad=3)
             # flight arc: fitted curve for the whole flight
             fi = flights_at.get(k)
             if fi is not None and analysis.flights[fi].arc is not None:
@@ -281,7 +333,14 @@ def render(
                 if fk.idx in motion_at:  # stabilized view -> this frame
                     curve = cv2.perspectiveTransform(curve.reshape(-1, 1, 2).astype(np.float64), motion_at[fk.idx]).reshape(-1, 2)
                 cv2.polylines(img, [curve.astype(np.int32)], False, (255, 255, 120), t(2), cv2.LINE_AA)
-            _scoreboard(img, f, score, pts, ids, m)
+            flash = {k_: 1.0 - (idx - at) / show for k_, at in changed.items() if idx - at <= show}
+            _scoreboard(img, f, score, reb, ast, ids, m, flash)
+            # play-by-play feed under the score card: the latest rebound / assist calls
+            event_y = t(14) + t(52) + t(20) + t(40) * max(2, len({tm for tm in (set(score) | set(reb) | set(ast) | set(ids.player_team.values())) if tm and tm != "?"})) + t(10)
+            for at, label, player, team, detail in calls[-3:]:
+                text = f"{label}  {player or 'Player'}" + (f"  >  {detail}" if detail else "")
+                _, event_y = _pill(img, text, t(14), event_y, team_color(team), 0.55, 1, m, pad=7)
+                event_y += t(6)
             if calib is not None:
                 mm = _minimap(calib.spec, f, ids, holder, scale=max(1, int(round(9 * m))))
                 mh, mw = mm.shape[:2]
