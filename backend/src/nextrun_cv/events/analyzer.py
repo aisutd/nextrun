@@ -131,19 +131,18 @@ class GameAnalyzer:
         return out
 
     def _assist(self, out, frames, segs, si, shot_ev: Event, last_pass_to, dribbles_in) -> None:
-        """The last pass to the scorer gets an assist. The scorer's possession is often split into several segments
-        (the ball is briefly lost behind a body), so walk back through the scorer's own consecutive segments to the
-        pass that started them, as long as the catch came within `assist_window_s` of the shot."""
+        """Every basket scored off a teammate's pass gives the passer an assist, however long the scorer then held
+        or dribbled. The scorer's possession is often split into several segments (the ball is briefly lost behind
+        a body), so walk back through the scorer's own consecutive segments to the pass that started them."""
         s = segs[si]
         k = si
-        while k > 0 and k not in last_pass_to and segs[k - 1].player == s.player:
-            k -= 1
+        shot_segs = {e.data.get("seg") for e in out.events if e.type == "shot" and e.data.get("seg") is not None}
+        while k > 0 and k not in last_pass_to and segs[k - 1].player == s.player and (k - 1) not in shot_segs:
+            k -= 1  # (a miss + own rebound in between starts a new play: no assist from before it)
         pass_ev = last_pass_to.get(k)
         if pass_ev is None or pass_ev.player in (None, s.player):
             return
         if pass_ev.team is not None and shot_ev.team is not None and pass_ev.team != shot_ev.team:
-            return
-        if shot_ev.t - frames[segs[k].start].t > self.cfg.events.assist_window_s:
             return
         if any(e.type == "assist" and e.data.get("shot_frame") == shot_ev.frame for e in out.events):
             return
