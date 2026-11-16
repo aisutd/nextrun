@@ -7,6 +7,7 @@ import { artwork } from "../theme/artwork";
 import { useTheme } from "../theme/theme";
 import { ResultVideo } from "./ResultVideo";
 import { GameDashboard } from "./GameDashboard";
+import { TeamRosterPicker } from "./TeamRosterPicker";
 import {
   fixCourt,
   frameUrl,
@@ -172,7 +173,8 @@ export function UploadFootage() {
     [err, setErr] = useState(""),
     [busy, setBusy] = useState(false),
     [tick, setTick] = useState(0),
-    [fixing, setFixing] = useState(false);
+    [fixing, setFixing] = useState(false),
+    [teamsSaved, setTeamsSaved] = useState(false);
   const id = s.gameId; // kept in app state, so leaving this tab does not lose the job
 
   async function choose() {
@@ -196,6 +198,9 @@ export function UploadFootage() {
     if (!id) return setG(null);
     getGame(id).then(setG).catch((e) => setErr((e as Error).message));
   }, [id]);
+  useEffect(() => {
+    setTeamsSaved(false);
+  }, [id]);
   const active = !!g && g.id === id && g.status !== "done" && g.status !== "failed";
   useEffect(() => {
     if (!id || !active) return;
@@ -213,6 +218,7 @@ export function UploadFootage() {
   const showPreview = !!g && active && g.frames_done > 0,
     label = g?.name || s.uploadName,
     estimated = !!g && g.status === "done" && (g.court_method === "estimate" || (g.court_conf ?? 0) < 0.5);
+
   return (
     <>
       <Card>
@@ -247,7 +253,7 @@ export function UploadFootage() {
           {g ? "Choose another video" : "Choose video"}
         </Button>
       </Card>
-      {g?.status === "done" && (
+      {g?.status === "done" && teamsSaved && (
         <Card style={{ marginTop: 12 }}>
           <Label kind="h3">Annotated game video</Label>
           {g.has_video ? (
@@ -280,7 +286,18 @@ export function UploadFootage() {
           )}
         </Card>
       )}
-      {g?.status === "done" && <GameDashboard id={g.id} key={`${g.id}-${g.video_version}`} />}
+      {g?.status === "done" && teamsSaved && <GameDashboard id={g.id} key={`${g.id}-${g.video_version}`} />}
+      {(g?.status === "done" || g?.status === "rendering") && (
+        <TeamRosterPicker
+          key={g.id}
+          id={g.id}
+          disabled={g.status !== "done"}
+          onSaved={async () => {
+            setTeamsSaved(true);
+            try { setG(await getGame(g.id)); } catch (e) { setErr((e as Error).message); }
+          }}
+        />
+      )}
       {g && (
         <View style={{ marginTop: 12, backgroundColor: INK, borderRadius: 20, padding: 14 }}>
           <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
