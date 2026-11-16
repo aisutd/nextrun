@@ -6,9 +6,9 @@
 #   identity.stitch joins the remaining lost tracks offline
 # On that benchmark (after stitching) vs the old fixed config: id switches 823 -> 591, IDF1 0.464 -> 0.518.
 tracker_type: botsort
-track_high_thresh: 0.3
+track_high_thresh: 0.15
 track_low_thresh: 0.1
-new_track_thresh: 0.4
+new_track_thresh: 0.12
 track_buffer: 150
 match_thresh: 0.9
 fuse_score: True

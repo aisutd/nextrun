@@ -103,12 +103,12 @@ def on_court(xy, spec: CourtSpec, margin: float, play_area=None) -> bool:
     return abs(xy[0]) <= spec.length / 2 + margin and abs(xy[1]) <= spec.width / 2 + margin
 
 
-def drop_off_court(frames: list[FrameState], court, margin: float, play_area=None) -> int:
-    """Remove people standing off the court (spectators, benches, next game). Returns how many."""
+def drop_off_court(frames: list[FrameState], court, margin: float, play_area=None, min_conf: float = 0.82) -> int:
+    """Remove off-court detections only when the court mapping is reliable; return how many."""
     n = 0
     for f in frames:
         calib = court.at(f.idx)
-        if f.players and calib is not None:
+        if f.players and calib is not None and calib.conf >= min_conf:
             keep = [p for p, xy in zip(f.players, calib.image_to_court([p.feet for p in f.players]))
                     if on_court(xy, calib.spec, margin, play_area)]
             n += len(f.players) - len(keep)
@@ -140,7 +140,8 @@ def fuse(frames: list[FrameState], court, cfg: Config) -> dict:
     usable = [f for f in frames if frame_court(court, f.idx, cfg.fusion) is not None]
     if not usable:
         return {"court": False}
-    dropped = drop_off_court(usable, court, cfg.fusion.off_court_margin_m, cfg.fusion.play_area)
+    dropped = drop_off_court(usable, court, cfg.fusion.off_court_margin_m, cfg.fusion.play_area,
+                             cfg.fusion.off_court_min_conf)
     annotate_players(usable, court)
     return {"court": True, "court_conf": court.conf, "court_frames": len(usable) / len(frames),
             "off_court_dropped": dropped}

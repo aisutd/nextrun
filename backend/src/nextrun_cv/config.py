@@ -87,7 +87,7 @@ class ModelConfig:
     # used instead when the camera moves (court.track.camera_moves): same tracker plus camera-motion compensation
     tracker_moving_cfg: str = str(WEIGHTS_DIR / "players" / "botsort_reid_moving.yaml")
     device: str | None = None  # None -> ultralytics picks cuda if available
-    player_conf: float = 0.35
+    player_conf: float = 0.10  # high recall for distant / partly occluded players; picker can remove false positives
     ball_conf: float = 0.25
     rim_conf: float = 0.35
     # model input size. None = the frame's own long side (capped at max_imgsz): players and the ball are
@@ -107,10 +107,10 @@ class ModelConfig:
     ball_full_every: int = 15
 
     # player detection clean-up (detect/players.py)
-    player_iou: float = 0.6  # NMS overlap: two boxes overlapping more than this are the same person
-    player_max_det: int = 40
-    player_min_height: float = 0.04  # people shorter than this share of the frame height are crowd / noise
-    player_dedupe_iou: float = 0.75  # two tracks on one body: keep the more confident box
+    player_iou: float = 0.88  # high NMS threshold preserves separate players whose boxes overlap in a crowd
+    player_max_det: int = 80
+    player_min_height: float = 0.02  # keep distant players; false positives can be removed in the team picker
+    player_dedupe_iou: float = 0.92  # only collapse near-identical boxes, not two players jostling together
 
     def use_half(self) -> bool:
         """Half precision is ~2x faster on an NVIDIA GPU with no real accuracy loss; the CPU and mps need float32."""
@@ -221,6 +221,9 @@ class FusionConfig:
     rim_max_offset: float = 1.0  # max horizontal offset, in rim widths
     rim_height_range: tuple[float, float] = (2.5, 7.5)  # rim height above that point, in rim widths (3.05 m ~ 6.7)
     off_court_margin_m: float = 1.0  # people further outside the court than this are dropped
+    # A weak court homography can place real players outside the painted court. Only filter players
+    # when the mapping is strong enough that off-court classification is trustworthy.
+    off_court_min_conf: float = 0.82
     # playing area [x_min, x_max, y_min, y_max] in court meters (venue profiles set it, e.g. a 3x3 half
     # court); None = the whole court
     play_area: list[float] | None = None
