@@ -135,6 +135,8 @@ class BallTrackConfig:
     max_gap_frames: int = 8  # linearly interpolate ball through occlusions up to this many frames
     max_jump_px_per_frame: float = 120.0  # (legacy) fixed-pixel gate; the tracker now scales its gate with player height
     max_jump_heights: float = 0.8  # ball may move at most this many player-heights between analysed frames (a hard pass is ~0.4)
+    gap_reach_heights: float = 0.3  # ...plus this much per extra frame it is unseen (held / hidden, not flying)
+    teleport_min_conf: float = 0.7  # a sighting the ball could not have reached since it was last seen needs this conf
     process_noise: float = 4.0
     measurement_noise: float = 6.0
 

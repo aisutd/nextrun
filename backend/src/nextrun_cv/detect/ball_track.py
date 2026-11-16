@@ -76,6 +76,13 @@ def _is_static(xy, cells: dict, cell: float, n_frames: int) -> bool:
     return float(np.ptp(np.asarray(near, float), axis=0).max()) < 0.5 * cell
 
 
+def _reach(gate: float, k: int, hm: float, slow: float) -> float:
+    """How far the ball can plausibly be from where it was seen k frames ago. One frame: `gate` (a hard pass). Over a
+    gap the ball is usually held or hidden, not flying flat out the whole time, so each extra unseen frame adds only
+    `slow` player heights: a ball that vanished at the rim cannot reappear on the far sideline half a second later."""
+    return gate + slow * hm * max(0, k - 1)
+
+
 def _radius_band(frames: list[FrameState]) -> tuple[float, float]:
     """Plausible ball radius in this clip: the median radius of the confident detections, 0.4x..2.5x (perspective
     makes the ball bigger near the camera, motion blur stretches it). Open-ended when there is too little to judge."""
@@ -128,25 +135,27 @@ def track_ball(frames: list[FrameState], cfg: BallTrackConfig) -> None:
         by_t.setdefault(t, []).append(i)
     n = len(cands)
     dp, prev = [0.0] * n, [-1] * n
+    restart = [False] * n  # reached by "the ball was lost": no distance check, so it starts a new stretch
     best_before, best_cur, cur_t = (-1e9, -1), (-1e9, -1), -1
     for i, (t, b) in enumerate(cands):
         if t != cur_t:
             if best_cur[0] > best_before[0]:
                 best_before = best_cur
             best_cur, cur_t = (-1e9, -1), t
-        val, pv = -R0, -1  # start a new segment
+        val, pv, rs = -R0, -1, True  # start a new segment
         if best_before[1] >= 0 and best_before[0] - R > val:  # ...or restart after a loss
             val, pv = best_before[0] - R, best_before[1]
         for tt in range(max(0, t - G), t):
             for j in by_t.get(tt, ()):
                 k = t - tt
                 d = float(np.hypot(b.xy[0] - cands[j][1].xy[0], b.xy[1] - cands[j][1].xy[1]))
-                if d > gate * k:
+                reach = _reach(gate, k, hm, cfg.gap_reach_heights)
+                if d > reach:
                     continue
-                v = dp[j] - (2.0 * (d / (gate * k)) ** 2 + SKIP * (k - 1))
+                v = dp[j] - (2.0 * (d / reach) ** 2 + SKIP * (k - 1))
                 if v > val:
-                    val, pv = v, j
-        dp[i], prev[i] = 2.0 * b.conf + val, pv
+                    val, pv, rs = v, j, False
+        dp[i], prev[i], restart[i] = 2.0 * b.conf + val, pv, rs
         if dp[i] > best_cur[0]:
             best_cur = (dp[i], i)
     i = int(np.argmax(dp))
@@ -158,10 +167,11 @@ def track_ball(frames: list[FrameState], cfg: BallTrackConfig) -> None:
     # drop lone, weak nodes (a one-frame glitch that the search had to bridge)
     segs: list[list[int]] = []
     for i in path:
-        if segs and cands[i][0] - cands[segs[-1][-1]][0] <= G and prev[i] == segs[-1][-1]:
+        if segs and not restart[i] and cands[i][0] - cands[segs[-1][-1]][0] <= G and prev[i] == segs[-1][-1]:
             segs[-1].append(i)
         else:
             segs.append([i])
+    last = None  # (frame index, xy) of the last kept sighting
     for sg in segs:
         mc = float(np.mean([cands[i][1].conf for i in sg]))
         if (len(sg) == 1 and mc < 0.6) or (len(sg) == 2 and mc < 0.4):
@@ -169,19 +179,31 @@ def track_ball(frames: list[FrameState], cfg: BallTrackConfig) -> None:
         xy = np.array([cands[i][1].xy for i in sg])
         if len(sg) >= 3 and float(np.ptp(xy, axis=0).max()) < 0.25 * hm and not any(held_at[i] for i in sg):
             continue  # a 'ball' that sits still away from every player is a fixture (pole top, sign), not the game ball
+        if last is not None:
+            # a stretch that starts somewhere the ball could not have got to since it was last seen is a different
+            # object (shorts, a shoe, a spare ball): keep it only if the detector is really sure
+            k = cands[sg[0]][0] - last[0]
+            d = float(np.hypot(*(xy[0] - last[1])))
+            if d > _reach(gate, k, hm, cfg.gap_reach_heights) and mc < cfg.teleport_min_conf:
+                continue
+        last = (cands[sg[-1]][0], xy[-1])
         for i in sg:
             t, b = cands[i]
             frames[t].ball = BallObs(b.xy, b.radius, b.conf)
-    interpolate_gaps(frames, cfg.max_gap_frames)
+    interpolate_gaps(frames, cfg.max_gap_frames, lambda k: _reach(gate, k, hm, cfg.gap_reach_heights))
 
 
-def interpolate_gaps(frames: list[FrameState], max_gap: int) -> None:
+def interpolate_gaps(frames: list[FrameState], max_gap: int, reach=None) -> None:
+    """Fill short gaps with a straight line, only when the ball could really have travelled between the two sightings
+    (reach(k) = max distance in k frames): never draw a line across the court to a different object."""
     known = [i for i, f in enumerate(frames) if f.ball is not None]
     for a, b in zip(known, known[1:]):
         gap = b - a - 1
         if gap <= 0 or gap > max_gap:
             continue
         pa, pb = np.array(frames[a].ball.xy), np.array(frames[b].ball.xy)
+        if reach is not None and float(np.hypot(*(pb - pa))) > reach(gap + 1):
+            continue
         ra, rb = frames[a].ball.radius, frames[b].ball.radius
         for k in range(1, gap + 1):
             w = k / (gap + 1)
