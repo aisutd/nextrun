@@ -115,6 +115,22 @@ def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cf
         for i, j in zip(*linear_sum_assignment(C)):
             if C[i, j] < big:
                 nxt[rows[i]] = cols[j]
+    # A track with no colour sample (always overlapping someone) passes the colour test with anyone, so a chain could
+    # walk green -> (unknown) -> pink. Check every link against the chain's last known colour and cut it there.
+    heads = [t for t in tids if t not in set(nxt.values())]
+    while heads:  # a cut makes the rest of the chain a new head, checked in turn
+        t = heads.pop()
+        ref, c = track_emb.get(t), t
+        while c in nxt:
+            n_ = nxt[c]
+            e = track_emb.get(n_)
+            if ref is not None and e is not None and 1.0 - float(ref @ e) > cfg.max_color_dist:
+                del nxt[c]
+                heads.append(n_)
+                break
+            if e is not None:
+                ref = e
+            c = n_
     has_prev = set(nxt.values())
     relabel = {}
     for t in tids:
