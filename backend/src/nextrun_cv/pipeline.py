@@ -26,7 +26,7 @@ from .config import CourtSpec
 from .court.base import CourtCalib, CourtNotFound
 from .court.track import CameraMotion, CourtTrack, camera_moves, stabilize_view, track_court
 from .court.venues import apply_venue, load_venue
-from .detect.ball_track import stabilize_rims, stabilize_rims_moving, track_ball
+from .detect.ball_track import drop_implausible_rims, stabilize_rims, stabilize_rims_moving, track_ball
 from .events.analyzer import GameAnalysis, GameAnalyzer
 from .events.overrides import apply_overrides, load_overrides
 from .identity.appearance import AppearanceBank
@@ -84,6 +84,7 @@ def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool =
             motion.add(idx, img, [p.bbox for p in f.players])
         if progress and n % 100 == 0:
             log.info("detect %d/%d frames", n, total)
+    drop_implausible_rims(frames)
     track_ball(frames, cfg.ball)
     if motion is not None:
         stabilize_rims_moving(frames, motion.seg, motion.M, (info.width, info.height))

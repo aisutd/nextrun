@@ -105,6 +105,7 @@ class ModelConfig:
     ball_crop_min: int = 640  # a small play area is upscaled to at least this long side
     ball_crop_max_share: float = 0.7  # play area bigger than this share of the frame: just use the whole frame
     ball_full_every: int = 15
+    ball_crop_rim_reach: float = 6.0  # the crop takes in people up to this many player heights to either side of a hoop
 
     # player detection clean-up (detect/players.py)
     player_iou: float = 0.88  # high NMS threshold preserves separate players whose boxes overlap in a crowd

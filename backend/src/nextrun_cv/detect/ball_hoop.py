@@ -32,10 +32,19 @@ class BallHoopDetector:
         if not c.ball_crop or not hint or not self._rims or self._n >= c.ball_full_every:
             return None
         H, W = shape[:2]
-        boxes = list(hint) + list(self._rims)
+        hs = float(np.median([b[3] - b[1] for b in hint]))
+        # a 'rim' far bigger than a hoop next to these players is a false box (a building, a window): letting it into
+        # the crop blows the crop up to most of the frame, and the ball at the real rim gets too small to see
+        rims = [r for r in self._rims if _plausible_rim(r, hs)]
+        if not rims:
+            return None
+        # only people within reach of a hoop: spectators and benches far to the side would stretch the crop past
+        # `ball_crop_max_share` and drop the model back to the shrunken full frame, where the ball on the rim is lost
+        reach = c.ball_crop_rim_reach * hs
+        near = [b for b in hint if any(abs((b[0] + b[2]) / 2 - (r[0] + r[2]) / 2) <= reach for r in rims)]
+        boxes = (near or list(hint)) + rims
         x1, y1 = min(b[0] for b in boxes), min(b[1] for b in boxes)
         x2, y2 = max(b[2] for b in boxes), max(b[3] for b in boxes)
-        hs = float(np.median([b[3] - b[1] for b in hint]))
         mx = max(0.15 * (x2 - x1), 1.5 * hs)
         x1, x2 = max(0, x1 - mx), min(W, x2 + mx)
         y1, y2 = max(0, y1 - 2.0 * hs), min(H, y2 + 0.5 * hs)  # headroom: shots peak well above the rim
@@ -81,3 +90,9 @@ class BallHoopDetector:
         if rims:
             self._rims = [r.bbox for r in rims]
         return balls, rims
+
+
+def _plausible_rim(box, player_h: float) -> bool:
+    """Hoop-sized and hoop-shaped next to players `player_h` tall (same rule as ball_track.drop_implausible_rims)."""
+    w, h = box[2] - box[0], box[3] - box[1]
+    return w <= 1.0 * player_h and h <= 1.5 * player_h and w <= 4 * max(h, 1) and h <= 4 * max(w, 1)

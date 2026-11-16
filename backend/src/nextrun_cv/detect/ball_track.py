@@ -294,3 +294,24 @@ def stabilize_rims(frames: list[FrameState], min_support: float = 0.05) -> list[
     for f in frames:
         f.rims = list(stable)
     return stable
+
+
+def drop_implausible_rims(frames: list[FrameState]) -> int:
+    """Remove 'rims' that cannot be a hoop: far bigger than a rim next to the players (a hoop is ~a quarter of a
+    player's height across; a false box over a building is several heights), or much wider/taller than a rim's shape.
+    Returns how many boxes were removed."""
+    hs = [p.height for f in frames for p in f.players]
+    if not hs:
+        return 0
+    hm = float(np.median(hs))
+    n = 0
+    for f in frames:
+        keep = []
+        for r in f.rims:
+            w, h = r.bbox[2] - r.bbox[0], r.bbox[3] - r.bbox[1]
+            if w > 1.0 * hm or h > 1.5 * hm or w > 4 * max(h, 1) or h > 4 * max(w, 1):
+                n += 1
+                continue
+            keep.append(r)
+        f.rims = keep
+    return n
