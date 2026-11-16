@@ -84,7 +84,8 @@ def _interp(frames: list[FrameState], k: int, idx: int) -> FrameState:
         cxy = _lerp(p.court_xy, q.court_xy, w) if p.court_xy is not None and q.court_xy is not None else p.court_xy
         players.append(replace(p, bbox=_lerp(p.bbox, q.bbox, w), court_xy=cxy))
     ball = f0.ball
-    if f0.ball is not None and f1.ball is not None:
+    hm_ = float(np.median([p.height for p in f0.players])) if f0.players else 100.0
+    if f0.ball is not None and f1.ball is not None and np.hypot(f1.ball.xy[0] - f0.ball.xy[0], f1.ball.xy[1] - f0.ball.xy[1]) <= 0.9 * hm_:
         ball = replace(f0.ball, xy=_lerp(f0.ball.xy, f1.ball.xy, w), radius=(1 - w) * f0.ball.radius + w * f1.ball.radius)
     return replace(f0, idx=idx, t=f0.t + w * (f1.t - f0.t), players=players, ball=ball)
 
@@ -123,26 +124,38 @@ def _pill(img, text, x, y, bg, scale, th, m, fg=None, pad=6, alpha=0.88):
     return x2, y2
 
 
+def _pill_size(text, scale, th, m, pad=6):
+    s, tk, p = scale * m, max(1, int(round(th * m))), int(pad * m)
+    (tw, tt), base = cv2.getTextSize(text, FONT, s, tk)
+    return tw + 2 * p, tt + base + 2 * p
+
+
+def _place(x, y, w, h, taken: list, W: int, step: int) -> tuple[int, int]:
+    """Top-left for a w x h tag wanted at (x, y), moved up past tags already placed so none overlap."""
+    x = int(min(max(0, x), max(0, W - w)))
+    for _ in range(12):
+        if not any(x < a2 and a1 < x + w and y < b2 and b1 < y + h for a1, b1, a2, b2 in taken):
+            break
+        y -= h + step
+    y = max(0, int(y))
+    taken.append((x, y, x + w, y + h))
+    return x, y
+
+
 # COCO-17 skeleton (pairs of keypoint indices)
 SKELETON = [(5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12), (11, 13), (13, 15), (12, 14), (14, 16)]
 
 
 def _player_box(img, p, col, t, holder: bool) -> None:
-    """The full-body detection square: thin outline + heavy corner brackets in the team colour (orange for the ball
-    holder), and the pose skeleton when the pose model saw the joints."""
+    """Corner brackets around the player in the team colour (orange for the ball holder). No full outline or pose
+    skeleton: on a crowded court they turn into a tangle of lines."""
     x1, y1, x2, y2 = map(int, p.bbox)
-    cv2.rectangle(img, (x1, y1), (x2, y2), col, t(1), cv2.LINE_AA)
     bc = (0, 165, 255) if holder else col
     L = max(t(8), int(min(x2 - x1, y2 - y1) * 0.22))
     th = t(3) if holder else t(2)
     for cx, cy, dx, dy in ((x1, y1, 1, 1), (x2, y1, -1, 1), (x1, y2, 1, -1), (x2, y2, -1, -1)):
         cv2.line(img, (cx, cy), (cx + dx * L, cy), bc, th, cv2.LINE_AA)
         cv2.line(img, (cx, cy), (cx, cy + dy * L), bc, th, cv2.LINE_AA)
-    kp = p.keypoints
-    if kp is not None:
-        for a, b in SKELETON:
-            if kp[a][2] > 0.4 and kp[b][2] > 0.4:
-                cv2.line(img, (int(kp[a][0]), int(kp[a][1])), (int(kp[b][0]), int(kp[b][1])), (255, 255, 255), t(1), cv2.LINE_AA)
 
 
 def _scoreboard(img, f, score: dict, reb: dict, ast: dict, ids, m: float, flash: dict | None = None) -> None:
@@ -224,6 +237,7 @@ def render(
         for k in range(fl.start, fl.end + 1):
             flights_at[k] = fi
     timeline = _event_timeline(analysis.events, fps)
+    shot_flights = {e.data.get("flight") for e in analysis.events if e.type == "shot"}  # only shots get an arc
     score: dict[str, int] = {}
     reb: dict[str, int] = {}
     ast: dict[str, int] = {}
@@ -268,11 +282,13 @@ def render(
             if court is not None:  # always draw the best court we have; an estimate is tagged as one below
                 lines = draw_court(img, court, (255, 215, 70), thick=t(3), show_points=False, label=False)
                 img = cv2.addWeighted(lines, 0.6, img, 0.4, 0)
-            for r in f.rims:
-                x1, y1, x2, y2 = map(int, r.bbox)
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 140, 255), t(3), cv2.LINE_AA)
-                _pill(img, f"RIM {r.conf:.0%}", x1, max(0, y1 - t(26)), (0, 100, 210), 0.48, 1, m, pad=4)
+            for r in f.rims:  # the hoop: a clean ring on the rim, no detector box or confidence
+                x1, y1, x2, y2 = r.bbox
+                rw_ = (x2 - x1) / 2
+                cv2.ellipse(img, (int((x1 + x2) / 2), int(y1 + 0.15 * rw_ * 2)), (int(rw_), max(2, int(rw_ * 0.35))), 0, 0, 360,
+                            (0, 140, 255), t(2), cv2.LINE_AA)
             # players: ring under the feet in the team colour, name tag with running points
+            tags = []
             for p in f.players:
                 name = ids.player(p.track_id)
                 if name in ids.excluded:
@@ -284,14 +300,21 @@ def render(
                 cv2.ellipse(img, (cx, y2), (rw, max(t(4), rw // 3)), 0, 0, 360, col, t(3), cv2.LINE_AA)
                 if name == holder:
                     cv2.ellipse(img, (cx, y2), (rw + t(6), max(t(5), rw // 3 + t(3))), 0, 0, 360, (0, 165, 255), t(2), cv2.LINE_AA)
-                label = name or "?"
-                _pill(img, label, x1, max(0, y1 - t(30)), col, 0.5, 1, m, pad=4)
                 c = callout.get(name)
+                if c is not None:  # orange ring for the player who just made the play
+                    cv2.ellipse(img, (cx, y2), (rw + t(10), max(t(6), rw // 3 + t(6))), 0, 0, 360, (0, 165, 255), t(3), cv2.LINE_AA)
+                tags.append((y2, cx, y1, name or "?", col, c))
+            taken: list = []
+            for _, cx, y1, label, col, c in sorted(tags, key=lambda q: -q[0]):  # nearest to the camera first
+                w_, h_ = _pill_size(label, 0.5, 1, m, pad=4)
+                x_, y_ = _place(cx - w_ // 2, y1 - h_ - t(6), w_, h_, taken, W0, t(3))
+                _pill(img, label, x_, y_, col, 0.5, 1, m, pad=4)
                 if c is not None:  # "REBOUND" / "ASSIST" over the player who just made the play, with a pop-in
                     age = (idx - c[0]) / show
                     sc = 0.62 * (1.25 - 0.25 * min(1.0, age * 6))
-                    _pill(img, c[1], x1, max(0, y1 - t(64)), (0, 165, 255), sc, 2, m, fg=(255, 255, 255), pad=5, alpha=0.95)
-                    cv2.ellipse(img, (cx, y2), (rw + t(10), max(t(6), rw // 3 + t(6))), 0, 0, 360, (0, 165, 255), t(3), cv2.LINE_AA)
+                    cw, ch = _pill_size(c[1], sc, 2, m, pad=5)
+                    x_, y_ = _place(cx - cw // 2, y_ - ch - t(4), cw, ch, taken, W0, t(3))
+                    _pill(img, c[1], x_, y_, (0, 165, 255), sc, 2, m, fg=(255, 255, 255), pad=5, alpha=0.95)
             # ball: fading trail (thicker and brighter towards the ball) and a soft glow
             tr = []  # newest sightings of the current unbroken stretch: a gap or a jump ends the trail
             for j in range(k, max(0, k - trail) - 1, -1):
@@ -316,17 +339,9 @@ def render(
                     cv2.circle(glow, (bx - gx1, by - gy1), br * 2, (0, 190, 255), -1, cv2.LINE_AA)
                     cv2.addWeighted(glow, 0.3, roi, 0.7, 0, roi)
                 cv2.circle(img, (bx, by), br, (0, 255, 255), t(2), cv2.LINE_AA)
-            elif f.ball_candidates:
-                # Keep the raw ball detector visible when the temporal tracker cannot join a sighting
-                # to the current flight. The lower confidence mark helps distinguish it from a track.
-                candidate = max(f.ball_candidates, key=lambda b: b.conf)
-                bx, by = map(int, candidate.xy)
-                br = max(t(7), int(candidate.radius))
-                cv2.circle(img, (bx, by), br, (0, 255, 255), t(2), cv2.LINE_AA)
-                _pill(img, f"BALL? {candidate.conf:.0%}", bx + br, max(0, by - br - t(24)), (0, 135, 185), 0.42, 1, m, pad=3)
             # flight arc: fitted curve for the whole flight
             fi = flights_at.get(k)
-            if fi is not None and analysis.flights[fi].arc is not None:
+            if fi is not None and fi in shot_flights and analysis.flights[fi].arc is not None:
                 fl = analysis.flights[fi]
                 ts = np.linspace(fl.points[0][1], fl.points[-1][1], 40)
                 curve = fl.arc.eval(ts)
