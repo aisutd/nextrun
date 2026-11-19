@@ -9,6 +9,7 @@ import { ResultVideo } from "./ResultVideo";
 import { GameDashboard } from "./GameDashboard";
 import { TeamRosterPicker } from "./TeamRosterPicker";
 import {
+  cancelGame,
   fixCourt,
   frameUrl,
   GameStatus,
@@ -27,6 +28,7 @@ const STAGE: Record<GameStatus["status"], number> = {
   rendering: 3,
   done: 4,
   failed: 4,
+  cancelled: 4,
 };
 // One row per model / stage in the backend pipeline (nextrun_cv.pipeline).
 const MODELS = [
@@ -174,7 +176,10 @@ export function UploadFootage() {
     [busy, setBusy] = useState(false),
     [tick, setTick] = useState(0),
     [fixing, setFixing] = useState(false),
-    [teamsSaved, setTeamsSaved] = useState(false);
+    [teamsSaved, setTeamsSaved] = useState(false),
+    [stopping, setStopping] = useState(false),
+    [stopped, setStopped] = useState("");
+  const abort = useRef<AbortController | null>(null);
   const id = s.gameId; // kept in app state, so leaving this tab does not lose the job
 
   async function choose() {
@@ -182,15 +187,42 @@ export function UploadFootage() {
     if (r.canceled) return;
     const a = r.assets[0];
     setErr("");
+    setStopped("");
     setBusy(true);
+    const ctl = new AbortController();
+    abort.current = ctl;
     try {
-      const game = await uploadGame({ uri: a.uri, name: a.name, mimeType: a.mimeType, file: a.file });
+      const game = await uploadGame({ uri: a.uri, name: a.name, mimeType: a.mimeType, file: a.file }, ctl.signal);
       setG(game);
       patch({ gameId: game.id, uploadName: a.name });
     } catch (e) {
-      setErr(`${(e as Error).message}. Is the NextRun API running?`);
+      if (!ctl.signal.aborted) setErr(`${(e as Error).message}. Is the NextRun API running?`);
     } finally {
+      abort.current = null;
       setBusy(false);
+    }
+  }
+
+  // Wrong video? Stop it while it uploads or while the models are still working, and discard it.
+  async function stop() {
+    const name = label;
+    setErr("");
+    if (busy) {
+      abort.current?.abort();
+      setStopped(`Stopped uploading ${name}.`);
+      return;
+    }
+    if (!g) return;
+    setStopping(true);
+    try {
+      await cancelGame(g.id);
+      setG(null);
+      patch({ gameId: "", uploadName: "" });
+      setStopped(`Stopped ${name}. It was not saved.`);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setStopping(false);
     }
   }
 
@@ -201,7 +233,7 @@ export function UploadFootage() {
   useEffect(() => {
     setTeamsSaved(false);
   }, [id]);
-  const active = !!g && g.id === id && g.status !== "done" && g.status !== "failed";
+  const active = !!g && g.id === id && g.status !== "done" && g.status !== "failed" && g.status !== "cancelled";
   useEffect(() => {
     if (!id || !active) return;
     const timer = setInterval(async () => {
@@ -239,7 +271,9 @@ export function UploadFootage() {
         <Label kind="muted" style={{ textAlign: "center", marginTop: 6, marginBottom: 10 }}>
           {err
             ? err
-            : busy
+            : stopped && !busy && !g
+              ? stopped
+              : busy
               ? "Uploading…"
               : g?.status === "failed"
                 ? `Processing failed: ${g.error ?? "unknown error"}`
@@ -249,9 +283,21 @@ export function UploadFootage() {
                     ? `${label} · ${Math.round(g.progress * 100)}%`
                     : "Choose a game video. The first 40 seconds are analyzed."}
         </Label>
-        <Button onPress={choose} disabled={busy || active} style={{ borderRadius: 999, paddingVertical: 10, marginBottom: 0 }} textStyle={{ fontSize: 12 }}>
-          {g ? "Choose another video" : "Choose video"}
-        </Button>
+        {busy || active ? (
+          <Button
+            onPress={stop}
+            disabled={stopping}
+            label="Stop upload"
+            style={{ borderRadius: 999, paddingVertical: 10, marginBottom: 0, borderColor: "#EF4444" }}
+            textStyle={{ fontSize: 12, color: "#EF4444" }}
+          >
+            {stopping ? "Stopping…" : "Stop upload"}
+          </Button>
+        ) : (
+          <Button onPress={choose} style={{ borderRadius: 999, paddingVertical: 10, marginBottom: 0 }} textStyle={{ fontSize: 12 }}>
+            {g ? "Choose another video" : "Choose video"}
+          </Button>
+        )}
       </Card>
       {g?.status === "done" && teamsSaved && (
         <Card style={{ marginTop: 12 }}>

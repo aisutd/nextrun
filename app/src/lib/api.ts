@@ -1,9 +1,17 @@
 import { Platform } from "react-native";
+import { filePart } from "./filePart";
 // Set EXPO_PUBLIC_API_URL to the machine running `uvicorn nextrun_cv.api:app --host 0.0.0.0`
 // (a phone needs your computer's LAN IP, e.g. http://192.168.1.20:8000).
-export const API =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://localhost:8000");
+// A browser on the computer itself talks to the backend directly, even when EXPO_PUBLIC_API_URL points at a
+// public tunnel for the phone: tunnels are slower and cap uploads (Cloudflare: 100 MB), so big videos stall.
+const localPage =
+  Platform.OS === "web" &&
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+export const API = localPage
+  ? `http://${window.location.hostname}:8000`
+  : (process.env.EXPO_PUBLIC_API_URL ??
+    (Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://localhost:8000"));
 export type GameStatus = {
   id: string;
   status:
@@ -13,7 +21,8 @@ export type GameStatus = {
     | "analyzing"
     | "rendering"
     | "done"
-    | "failed";
+    | "failed"
+    | "cancelled";
   error: string | null;
   court_calibrated: boolean;
   court_conf: number | null;
@@ -47,18 +56,18 @@ export type BoxScore = {
   players: Record<string, string | number | null>[];
 };
 export type Picked = { uri: string; name: string; mimeType?: string; file?: File };
-export async function uploadGame(v: Picked): Promise<GameStatus> {
+export async function uploadGame(v: Picked, signal?: AbortSignal): Promise<GameStatus> {
   const body = new FormData();
   if (Platform.OS === "web" && v.file) body.append("video", v.file, v.name);
-  else
-    body.append("video", {
-      uri: v.uri,
-      name: v.name,
-      type: v.mimeType ?? "video/mp4",
-    } as unknown as Blob);
-  const r = await fetch(`${API}/games`, { method: "POST", body });
+  else body.append("video", filePart(v.uri));
+  const r = await fetch(`${API}/games`, { method: "POST", body, signal });
   if (!r.ok) throw new Error(`Upload failed (${r.status})`);
   return r.json();
+}
+// Stop a game that is still uploading or processing; the backend throws it away.
+export async function cancelGame(id: string): Promise<void> {
+  const r = await fetch(`${API}/games/${id}/cancel`, { method: "POST" });
+  if (!r.ok && r.status !== 404) throw new Error(`Stop failed (${r.status})`);
 }
 export async function getGame(id: string): Promise<GameStatus> {
   const r = await fetch(`${API}/games/${id}`);
@@ -213,3 +222,70 @@ export const addBasket = (id: string, b: { t: number; player: string; points?: n
 export const undoCorrection = (id: string, kind: "shot" | "add", frame: number) =>
   send("DELETE", `/games/${id}/corrections/${kind}/${frame}`);
 export const setScoring = (id: string, mode: ScoringMode) => send("PUT", `/games/${id}/scoring`, { mode });
+
+// --- live camera ---
+export type LivePlayer = {
+  track_id: number;
+  bbox: [number, number, number, number];
+  has_ball: boolean;
+  zone?: "3PT" | "2PT" | "CLOSE";
+  court_xy?: [number, number];
+  keypoints?: [number, number, number][];
+};
+export type LiveFrame = {
+  width: number;
+  height: number;
+  ms: number;
+  model_fps: number;
+  court: { method: string; conf: number; usable: boolean } | null;
+  players: LivePlayer[];
+  ball: { xy: [number, number]; holder: number | null; r?: number; conf?: number } | null;
+  ball_candidates: { xy: [number, number]; r: number; conf: number }[];
+  rims: { bbox: [number, number, number, number]; conf: number; hoop?: string | null; agrees_with_court?: boolean }[];
+  game: LiveGame | null;
+};
+export type LiveEvent = {
+  type: "shot" | "rebound" | "assist" | "steal" | "turnover";
+  t: number;
+  player: string | null;
+  made?: boolean;
+  three?: boolean;
+  points?: number;
+  dunk?: boolean;
+  offensive?: boolean;
+  to?: string | null;
+};
+export type LiveGame = {
+  frames: number;
+  fps: number;
+  totals: {
+    points: number; shots: number; makes: number; misses: number; threes: number; rebounds: number;
+    assists: number; possessions: number; passes: number; steals: number; turnovers: number;
+  };
+  players: { player: string; track_id: number | null; PTS: number; REB: number; AST: number; FGM: number; FGA: number; TOUCH: number }[];
+  events: LiveEvent[];
+};
+// record: keep every frame on the backend so the session can be saved as a game (phones cannot record video
+// while grabbing frames in Expo Go).
+export async function liveStart(record = false): Promise<void> {
+  const r = await fetch(`${API}/live/start${record ? "?record=true" : ""}`, { method: "POST" });
+  if (!r.ok) throw new Error(`Live start failed (${r.status})`);
+}
+// jpeg: a Blob on the web, or a local file uri from the phone camera.
+export async function liveFrame(jpeg: Blob | { uri: string }): Promise<LiveFrame> {
+  const body = new FormData();
+  if (jpeg instanceof Blob) body.append("image", jpeg, "frame.jpg");
+  else body.append("image", filePart(jpeg.uri));
+  const r = await fetch(`${API}/live/frame`, { method: "POST", body });
+  if (!r.ok) throw new Error(`Live frame failed (${r.status})`);
+  return r.json();
+}
+// Turn a recorded live session (liveStart(true)) into a game and run the full analysis on it.
+export async function liveSave(): Promise<GameStatus> {
+  const r = await fetch(`${API}/live/save`, { method: "POST" });
+  if (!r.ok) {
+    const detail = await r.json().then((j) => j.detail).catch(() => "");
+    throw new Error(detail || `Saving the live session failed (${r.status})`);
+  }
+  return r.json();
+}

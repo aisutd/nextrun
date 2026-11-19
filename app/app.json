@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "name": "NextRun",
+    "slug": "nextrun",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nextrun.app"
+    },
+    "android": {
+      "package": "com.nextrun.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-font",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Choose a selfie for your NextRun player card.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ],
+      "expo-video",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "NextRun uses the camera to track your game live.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ]
+    ]
+  }
+}

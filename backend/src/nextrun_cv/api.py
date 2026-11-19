@@ -46,7 +46,7 @@ MAX_IMGSZ = int(os.environ.get("NEXTRUN_MAX_IMGSZ", 1280))  # ball/rim model inp
 PLAYER_IMGSZ = int(os.environ.get("NEXTRUN_PLAYER_IMGSZ", 1920))  # preserve detail for distant players in wide outdoor footage
 COURTS = Literal["highschool", "fiba", "nba", "ncaa"]
 SCORING = Literal["standard", "3x3"]  # standard: 2 inside the arc / 3 outside; 3x3: 1 / 2
-Status = Literal["queued", "detecting", "calibrating", "analyzing", "rendering", "done", "failed"]
+Status = Literal["queued", "detecting", "calibrating", "analyzing", "rendering", "done", "failed", "cancelled"]
 
 app = FastAPI(title="NextRun", description="Basketball stat tracking from game video")
 # the Expo app (web build / dev server) calls this API from another origin
@@ -94,7 +94,22 @@ def _status(d: Path) -> GameStatus:
     return GameStatus.model_validate_json((d / "status.json").read_text())
 
 
+class _Cancelled(Exception):
+    """The user pressed Stop: the worker unwinds and deletes the game."""
+
+
+def _cancelled(d: Path) -> bool:
+    return (d / "cancel").exists()
+
+
+def _check_cancel(d: Path) -> None:
+    if _cancelled(d):
+        raise _Cancelled
+
+
 def _set_status(d: Path, **kw) -> GameStatus:
+    if _cancelled(d):  # a progress write racing a Stop must not flip the game back to running
+        kw["status"] = "cancelled"
     s = _status(d).model_copy(update=kw)
     tmp = d / "status.json.tmp"
     tmp.write_text(s.model_dump_json())
@@ -154,8 +169,10 @@ def _web_video(src: Path, dst: Path) -> Path:
 
 def _finish(d: Path, cfg: Config, video: str, game_id: str) -> None:
     """analyze -> render -> web video -> done (first processing, and again after a court correction)."""
+    _check_cancel(d)
     _set_status(d, status="analyzing", progress=0.75)
     analysis, ids, frames = pipeline.analyze(str(d), cfg)
+    _check_cancel(d)
     _set_status(d, status="rendering", progress=0.85, has_video=False, render_error=None)
     try:  # the annotated video is the showpiece, but stats stand without it
         (d / "annotated_web.mp4").unlink(missing_ok=True)
@@ -184,6 +201,8 @@ def recalibrate_game(game_id: str, points: list[tuple[float, float]]) -> None:
         track = pipeline.calibrate(video, str(d), cfg, manual_points=pairs)
         _set_status(d, court_calibrated=True, court_conf=float(track.best().conf), court_method=track.best().method)
         _finish(d, cfg, video, game_id)
+    except _Cancelled:
+        shutil.rmtree(d, ignore_errors=True)
     except Exception as e:  # noqa: BLE001
         log.exception("game %s: court correction failed", game_id)
         _set_status(d, status="failed", error=f"court correction failed: {e}")
@@ -231,6 +250,7 @@ def process_game(game_id: str) -> None:
     last = {"t": 0.0}
 
     def on_frame(n: int, total: int, img, f) -> None:
+        _check_cancel(d)
         seen["players"] = max(seen["players"], len(f.players))
         seen["ball"] += bool(f.ball_candidates)
         seen["rim"] += bool(f.rims)
@@ -243,9 +263,12 @@ def process_game(game_id: str) -> None:
         _preview(d, img, f)
 
     try:
+        _check_cancel(d)
         _set_status(d, status="detecting")
         try:
             pipeline.detect(video, str(d), cfg, progress=False, on_frame=on_frame)
+        except _Cancelled:
+            raise
         except Exception as e:  # noqa: BLE001
             if cfg.models.device != "mps":
                 raise
@@ -253,6 +276,7 @@ def process_game(game_id: str) -> None:
             cfg.models.device = "cpu"
             seen.update(players=0, ball=0, rim=0)
             pipeline.detect(video, str(d), cfg, progress=False, on_frame=on_frame)
+        _check_cancel(d)
         _set_status(d, status="calibrating", progress=0.62, max_players=seen["players"], ball_frames=seen["ball"], rim_frames=seen["rim"])
         try:
             track = pipeline.calibrate(video, str(d), cfg, venue=_status(d).venue)
@@ -266,7 +290,13 @@ def process_game(game_id: str) -> None:
         except Exception as e:  # noqa: BLE001
             log.warning("game %s: court calibration failed: %s", game_id, e)
         _finish(d, cfg, video, game_id)
+    except _Cancelled:
+        log.info("game %s: stopped by the user", game_id)
+        shutil.rmtree(d, ignore_errors=True)
     except Exception as e:  # noqa: BLE001
+        if _cancelled(d):
+            shutil.rmtree(d, ignore_errors=True)
+            return
         log.exception("game %s failed", game_id)
         _set_status(d, status="failed", error=str(e))
 
@@ -299,6 +329,260 @@ def analyze_frame(image: UploadFile = File(...)):
         return _models.analyze_image(img)
 
 
+# --- live camera ---------------------------------------------------------------------------------------
+# The app streams camera frames one at a time (send the next once the last answer is back). Tracks persist
+# between frames so IDs stay stable; the court is calibrated from the live feed and re-tried until it sticks.
+LIVE_IMGSZ = int(os.environ.get("NEXTRUN_LIVE_IMGSZ", 960))
+LIVE_CALIB_EVERY = 30  # frames between court attempts while uncalibrated
+_live = {"nr": None, "frame": 0, "t0": 0.0, "last_calib": -LIVE_CALIB_EVERY, "fps": 0.0, "record": False, "times": []}
+# Phones (Expo Go) cannot record video while grabbing frames, so a live session can keep its frames here instead;
+# POST /live/save turns them into a video and runs the full upload pipeline on it.
+LIVE_DIR = DATA_DIR.parent / "live"
+
+
+class _LiveIds:
+    """Stable player ids for a live feed. Frames arrive only a few times a second, which the video tracker
+    (built for every-frame input) handles badly - it drops players until they match twice. Here every
+    detection is kept and gets the id of the nearest recent player (distance in body heights)."""
+
+    MAX_DIST = 1.2  # body heights a player can move between two live frames
+    MAX_AGE = 20  # frames a lost id is remembered
+
+    def __init__(self) -> None:
+        self.tracks: dict[int, tuple[float, float, float, int]] = {}  # id -> cx, cy, h, last frame
+        self.next_id = 1
+
+    def assign(self, boxes: list[tuple[float, float, float, float]], confs: list[float], idx: int) -> list[int]:
+        self.tracks = {k: v for k, v in self.tracks.items() if idx - v[3] <= self.MAX_AGE}
+        pairs = []
+        for i, (x1, y1, x2, y2) in enumerate(boxes):
+            cx, cy, h = (x1 + x2) / 2, (y1 + y2) / 2, max(1.0, y2 - y1)
+            for k, (tx, ty, th, _) in self.tracks.items():
+                d = ((cx - tx) ** 2 + (cy - ty) ** 2) ** 0.5 / max(h, th)
+                if d < self.MAX_DIST:
+                    pairs.append((d, i, k))
+        ids: dict[int, int] = {}
+        used: set[int] = set()
+        for d, i, k in sorted(pairs):
+            if i not in ids and k not in used:
+                ids[i] = k
+                used.add(k)
+        out = []
+        for i, (x1, y1, x2, y2) in enumerate(boxes):
+            if i not in ids:
+                ids[i] = self.next_id
+                self.next_id += 1
+            self.tracks[ids[i]] = ((x1 + x2) / 2, (y1 + y2) / 2, max(1.0, y2 - y1), idx)
+            out.append(ids[i])
+        return out
+
+
+_live_ids = _LiveIds()
+
+# Live game events: every live frame is kept, and a background thread re-runs the same offline analysis the
+# uploads use (ball tracking, court fusion, possession, shots / makes, rebounds, assists) over the session so
+# far, about once a second. Each /live/frame answer carries the latest result.
+LIVE_MAX_FRAMES = int(os.environ.get("NEXTRUN_LIVE_MAX_FRAMES", 6000))  # ~15 min at 6-7 frames/s
+LIVE_ANALYZE_EVERY = 1.0  # seconds between event passes
+_live_buf: list = []  # raw FrameStates (before fusion), in order
+_live_events = {"session": 0, "result": None, "busy": False, "last": 0.0}
+_live_buf_lock = threading.Lock()
+
+STAT_KEYS = ["PTS", "REB", "AST", "FGM", "FGA", "3PM", "3PA", "OREB", "DREB", "STL", "TOV", "PASS", "TOUCH"]
+
+
+def _live_analysis(frames: list, calib, cfg: Config) -> dict:
+    """The upload pipeline's event pass (minus identity tagging) over the live frames so far."""
+    from nextrun_cv import fusion
+    from nextrun_cv.detect.ball_track import drop_implausible_rims, track_ball
+    from nextrun_cv.events.analyzer import GameAnalyzer
+    from nextrun_cv.stats.boxscore import box_score
+
+    if len(frames) < 4:
+        return None
+    span = frames[-1].t - frames[0].t
+    fps = (len(frames) - 1) / span if span > 0 else 6.0
+    drop_implausible_rims(frames)
+    track_ball(frames, cfg.ball)
+    fusion.fuse(frames, calib, cfg)
+    analysis = GameAnalyzer(cfg, fps, None, calib).analyze(frames)
+    ev = [e for e in analysis.events if e.type != "dribble"]
+    shots = [e for e in ev if e.type == "shot"]
+    bs = box_score(analysis)
+    players = []
+    for r in bs.to_dict("records"):
+        if not (r["FGA"] or r["REB"] or r["AST"] or r["TOUCH"]):
+            continue
+        name = str(r["player"])
+        players.append({"player": name, "track_id": int(name.split(":")[1]) if name.startswith("track:") else None,
+                        **{k: int(r[k]) for k in STAT_KEYS}})
+    players.sort(key=lambda r: (-r["PTS"], -r["REB"], -r["AST"], -r["TOUCH"]))
+
+    def feed(e) -> dict:
+        d = {"type": e.type, "t": round(float(e.t), 1), "player": e.player}
+        if e.type == "shot":
+            d.update(made=bool(e.data.get("made")), three=bool(e.data.get("three")),
+                     points=int(e.data.get("points", 0)) if e.data.get("made") else 0, dunk=bool(e.data.get("dunk")))
+        elif e.type == "rebound":
+            d["offensive"] = bool(e.data.get("offensive"))
+        elif e.type == "assist":
+            d["to"] = e.data.get("scorer") or e.data.get("to")
+        return d
+
+    made = [e for e in shots if e.data.get("made")]
+    return {
+        "frames": len(frames),
+        "fps": round(fps, 1),
+        "totals": {
+            "points": int(sum(e.data.get("points", 2) for e in made)),
+            "shots": len(shots),
+            "makes": len(made),
+            "misses": len(shots) - len(made),
+            "threes": sum(1 for e in made if e.data.get("three")),
+            "rebounds": sum(1 for e in ev if e.type == "rebound"),
+            "assists": sum(1 for e in ev if e.type == "assist"),
+            "possessions": sum(1 for e in ev if e.type == "possession_gain"),
+            "passes": sum(1 for e in ev if e.type == "pass"),
+            "steals": sum(1 for e in ev if e.type == "steal"),
+            "turnovers": sum(1 for e in ev if e.type == "turnover"),
+        },
+        "players": players[:12],
+        "events": [feed(e) for e in ev if e.type in ("shot", "rebound", "assist", "steal", "turnover")][-12:][::-1],
+    }
+
+
+def _live_analyze_bg(session: int) -> None:
+    import copy
+
+    try:
+        with _live_buf_lock:
+            frames = copy.deepcopy(_live_buf)
+        nr = _live["nr"]
+        calib = nr.calib if nr is not None else None
+        out = _live_analysis(frames, calib, nr.cfg if nr is not None else Config())
+        if session == _live_events["session"] and out is not None:
+            _live_events["result"] = out
+    except Exception:  # noqa: BLE001  (a failed pass just keeps the previous numbers)
+        log.exception("live event analysis failed")
+    finally:
+        _live_events["busy"] = False
+
+
+def _live_kick_analysis() -> None:
+    now = time.monotonic()
+    if _live_events["busy"] or now - _live_events["last"] < LIVE_ANALYZE_EVERY:
+        return
+    _live_events.update(busy=True, last=now)
+    threading.Thread(target=_live_analyze_bg, args=(_live_events["session"],), daemon=True).start()
+
+
+def _live_detect(nr, img: np.ndarray, idx: int, t: float):
+    """Players (pose model, plain detection + live ids), then the ball/rim detector."""
+    from nextrun_cv.detect.players import dedupe_players
+    from nextrun_cv.schema import FrameState, PlayerObs
+
+    m = nr.cfg.models
+    res = nr.players.model.predict(img, classes=[0], conf=m.player_conf, imgsz=m.input_size(img.shape), device=m.device,
+                                   iou=m.player_iou, max_det=m.player_max_det, agnostic_nms=True,
+                                   half=nr.players._half, verbose=False)[0]
+    players = []
+    if res.boxes is not None and len(res.boxes):
+        xyxy = res.boxes.xyxy.cpu().numpy()
+        confs = res.boxes.conf.cpu().numpy()
+        kps = res.keypoints.data.cpu().numpy() if res.keypoints is not None else None
+        keep = [i for i in range(len(xyxy)) if xyxy[i][3] - xyxy[i][1] >= m.player_min_height * img.shape[0]]
+        players = [PlayerObs(track_id=-1, bbox=tuple(float(v) for v in xyxy[i]), conf=float(confs[i]),
+                             keypoints=None if kps is None else kps[i].astype(float)) for i in keep]
+        players = dedupe_players(players, m.player_dedupe_iou)
+        for p, k in zip(players, _live_ids.assign([p.bbox for p in players], [p.conf for p in players], idx)):
+            p.track_id = k
+    balls, rims = nr.ball_hoop.detect(img, [p.bbox for p in players])
+    ball = max(balls, key=lambda b: b.conf) if balls else None
+    return FrameState(idx, t, players, ball, balls, rims)
+
+
+def _live_models():
+    if _live["nr"] is None:
+        from nextrun_cv.integration import NextRun
+
+        cfg = Config()
+        cfg.models.device = _best_device()
+        cfg.models.max_imgsz = cfg.models.ball_max_imgsz = LIVE_IMGSZ
+        _live["nr"] = NextRun(cfg)
+    return _live["nr"]
+
+
+@app.post("/live/start")
+def live_start(record: bool = False) -> dict:
+    """New live session: forget tracks and the court calibration (loads the models on first use).
+    `record=true` keeps every frame so the session can be saved as a game afterwards (POST /live/save)."""
+    with _models_lock:
+        shutil.rmtree(LIVE_DIR, ignore_errors=True)
+        if record:
+            LIVE_DIR.mkdir(parents=True, exist_ok=True)
+        _live_models().reset()
+        _live_ids.__init__()
+        with _live_buf_lock:
+            _live_buf.clear()
+        _live_events.update(session=_live_events["session"] + 1, result=None, last=0.0)
+        _live.update(frame=0, t0=time.monotonic(), last_calib=-LIVE_CALIB_EVERY, fps=0.0, record=record, times=[])
+    return {"ok": True, "device": _live["nr"].cfg.models.device or "auto"}
+
+
+@app.post("/live/frame")
+def live_frame(image: UploadFile = File(...)) -> dict:
+    """One camera frame through every model: players (tracked, with pose keypoints), ball, rims, court,
+    2PT / 3PT zones and who has the ball once the court is known."""
+    from nextrun_cv import fusion
+    from nextrun_cv.court.base import CourtNotFound
+
+    raw = image.file.read()
+    img = cv2.imdecode(np.frombuffer(raw, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise HTTPException(400, "not an image")
+    with _models_lock:
+        nr = _live_models()
+        start = time.monotonic()
+        idx = _live["frame"]
+        if _live["record"] and len(_live["times"]) < LIVE_MAX_FRAMES:
+            (LIVE_DIR / f"{len(_live['times']):06d}.jpg").write_bytes(raw)
+            _live["times"].append(start - _live["t0"])
+        f = _live_detect(nr, img, idx, start - _live["t0"])
+        import copy
+
+        with _live_buf_lock:
+            _live_buf.append(copy.deepcopy(f))
+            del _live_buf[:-LIVE_MAX_FRAMES]
+        if nr.calib is None and idx - _live["last_calib"] >= LIVE_CALIB_EVERY:
+            _live["last_calib"] = idx
+            try:
+                nr.calibrate([img], [f])
+            except CourtNotFound:
+                nr.calib = None
+            except Exception as e:  # noqa: BLE001  (calibration is best effort while live)
+                log.warning("live court calibration failed: %s", e)
+                nr.calib = None
+        fusion.fuse([f], nr.calib, nr.cfg)
+        out = nr.describe(f)
+        kps = {p.track_id: p.keypoints for p in f.players if p.keypoints is not None}
+        for p in out["players"]:
+            k = kps.get(p["track_id"])
+            if k is not None:
+                p["keypoints"] = [[round(float(x), 1), round(float(y), 1), round(float(c), 2)] for x, y, c in k]
+        out["ball_candidates"] = [{"xy": [round(v, 1) for v in b.xy], "r": round(float(b.radius), 1),
+                                   "conf": round(float(b.conf), 2)} for b in f.ball_candidates]
+        if f.ball is not None and out["ball"] is not None:
+            out["ball"]["r"] = round(float(f.ball.radius), 1)
+            out["ball"]["conf"] = round(float(f.ball.conf), 2)
+        ms = (time.monotonic() - start) * 1000
+        _live["fps"] = 0.8 * _live["fps"] + 0.2 * (1000 / max(ms, 1)) if idx else 1000 / max(ms, 1)
+        _live["frame"] = idx + 1
+        out.update(width=img.shape[1], height=img.shape[0], ms=round(ms), model_fps=round(_live["fps"], 1),
+                   game=_live_events["result"])
+    _live_kick_analysis()
+    return out
+
+
 @app.post("/games", response_model=GameStatus, status_code=202)
 def create_game(
     background: BackgroundTasks,
@@ -316,18 +600,66 @@ def create_game(
     game_id = uuid.uuid4().hex[:12]
     d = DATA_DIR / game_id
     d.mkdir(parents=True)
-    with open(d / "video.mp4", "wb") as fh:
+    webm = (video.filename or "").lower().endswith(".webm") or "webm" in (video.content_type or "")
+    raw = d / ("upload.webm" if webm else "video.mp4")
+    with open(raw, "wb") as fh:
         while chunk := video.file.read(1 << 20):
             fh.write(chunk)
+    if webm:  # live recordings from the browser: no reliable fps/duration in the header, so remux to a 30 fps mp4
+        exe = _ffmpeg()
+        if exe is None:
+            raise HTTPException(500, "ffmpeg not found (pip install imageio-ffmpeg)")
+        r = subprocess.run([exe, "-y", "-i", str(raw), "-r", "30", "-vf", "scale=trunc(iw/2)*2:trunc(ih/2)*2",
+                            "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-an", str(d / "video.mp4")],
+                           capture_output=True)
+        if r.returncode != 0:
+            raise HTTPException(400, "could not read the recording: " + r.stderr.decode(errors="ignore")[-200:])
+        raw.unlink(missing_ok=True)
+    return _queue_game(d, background, court, venue, scoring, video.filename or "")
+
+
+def _queue_game(d: Path, background: BackgroundTasks, court: str, venue: str | None, scoring: str, name: str) -> GameStatus:
+    """d holds video.mp4: write its config + status and start processing in the background."""
     cfg = Config(court=CourtSpec.preset(court))
     if venue is not None:
         apply_venue(cfg, venue)
     cfg.events.scoring = scoring
     cfg.save(d / "config.json")
-    s = GameStatus(id=game_id, status="queued", court=court, venue=venue, name=video.filename or "")
+    s = GameStatus(id=d.name, status="queued", court=court, venue=venue, name=name)
     (d / "status.json").write_text(s.model_dump_json())
-    background.add_task(process_game, game_id)
+    background.add_task(process_game, d.name)
     return s
+
+
+@app.post("/live/save", response_model=GameStatus, status_code=202)
+def live_save(background: BackgroundTasks, court: COURTS = Form("highschool"), scoring: SCORING = Form("standard")):
+    """End a recorded live session (POST /live/start?record=true): its frames become a video at the rate they
+    were captured, which then goes through the same full analysis as an upload. Poll GET /games/{id}."""
+    with _models_lock:
+        times, _live["record"], _live["times"] = list(_live["times"]), False, []
+    frames = sorted(LIVE_DIR.glob("*.jpg"))[: len(times)] if LIVE_DIR.is_dir() else []
+    if len(frames) < 8:
+        shutil.rmtree(LIVE_DIR, ignore_errors=True)
+        raise HTTPException(400, "the live session was too short to save (record for a few seconds)")
+    span = times[len(frames) - 1] - times[0]
+    fps = min(30.0, max(1.0, (len(frames) - 1) / span)) if span > 0 else 5.0
+    first = cv2.imread(str(frames[0]))
+    h, w = (first.shape[0] // 2) * 2, (first.shape[1] // 2) * 2
+    game_id = uuid.uuid4().hex[:12]
+    d = DATA_DIR / game_id
+    d.mkdir(parents=True)
+    out = cv2.VideoWriter(str(d / "video.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
+    for f in frames:
+        img = cv2.imread(str(f))
+        if img is None:
+            continue
+        if img.shape[:2] != (h, w):  # the phone was turned mid-session: fit it to the first frame's size
+            img = cv2.resize(img, (w, h))
+        out.write(img)
+    out.release()
+    shutil.rmtree(LIVE_DIR, ignore_errors=True)
+    name = f"live-{time.strftime('%Y-%m-%d-%H-%M-%S')}.mp4"
+    return _queue_game(d, background, court, None, scoring, name)
 
 
 @app.get("/games", response_model=list[GameStatus])
@@ -335,12 +667,24 @@ def list_games() -> list[GameStatus]:
     """Past uploads, newest first (results are kept on disk, so they survive restarts)."""
     dirs = [p for p in DATA_DIR.glob("*") if (p / "status.json").exists()] if DATA_DIR.is_dir() else []
     dirs.sort(key=lambda p: (p / "status.json").stat().st_mtime, reverse=True)
-    return [_status(p) for p in dirs[:30]]
+    return [s for s in (_status(p) for p in dirs[:30]) if s.status != "cancelled"]
 
 
 @app.get("/games/{game_id}", response_model=GameStatus)
 def get_game(game_id: str):
     return _status(_dir(game_id))
+
+
+@app.post("/games/{game_id}/cancel", status_code=204)
+def cancel_game(game_id: str) -> None:
+    """Stop an upload that is still processing and throw it away (for when the wrong video was picked).
+    The worker notices at the next frame or stage and deletes the folder; a finished game is deleted now."""
+    d = _dir(game_id)
+    if _status(d).status in ("done", "failed", "cancelled"):
+        shutil.rmtree(d, ignore_errors=True)
+        return
+    (d / "cancel").touch()
+    _set_status(d, status="cancelled")
 
 
 @app.get("/games/{game_id}/preview")

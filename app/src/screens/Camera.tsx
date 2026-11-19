@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { Image, Pressable, View } from "react-native";
+import { Image, Platform, Pressable, View } from "react-native";
 import { useApp } from "../state/AppState";
 import { formatTime } from "../state/model";
 import {
@@ -12,12 +12,34 @@ import {
   Scene,
 } from "../components/ui";
 import { Queue, UploadFootage } from "../components/UploadFootage";
+import { LiveCamera } from "../components/LiveCamera";
+import { GameStatus, uploadGame } from "../lib/api";
 import { useTheme } from "../theme/theme";
 import { artwork } from "../theme/artwork";
 export function Camera() {
   const { s, patch } = useApp(),
     t = useTheme(),
-    [now, time] = useState(Date.now());
+    [now, time] = useState(Date.now()),
+    [saveErr, setSaveErr] = useState("");
+  async function saveRecording(file: File) {
+    setSaveErr("");
+    patch({ uploading: true });
+    try {
+      const game = await uploadGame({ uri: "", name: file.name, mimeType: file.type, file });
+      patch({ gameId: game.id, uploadName: file.name, cameraTab: "Upload", uploading: false, recording: false });
+    } catch (e) {
+      patch({ uploading: false, recording: false });
+      setSaveErr(`Could not upload the recording: ${(e as Error).message}`);
+    }
+  }
+  // phone: the backend saved the live session's frames as a game; show its full analysis on the Upload tab
+  function sessionSaved(game: GameStatus) {
+    patch({ gameId: game.id, uploadName: game.name, cameraTab: "Upload", uploading: false, recording: false });
+  }
+  function sessionFailed(message: string) {
+    patch({ uploading: false, recording: false });
+    setSaveErr(`Could not save the live session: ${message}`);
+  }
   useEffect(() => {
     if (!s.recording) return;
     const id = setInterval(() => time(Date.now()), 500);
@@ -58,7 +80,9 @@ export function Camera() {
             value={s.mode}
             onChange={(mode) => patch({ mode })}
           />
-          <Scene
+<LiveCamera active={s.recording} accent={t.accent} onRecorded={saveRecording} onSaved={sessionSaved} onSaveError={sessionFailed} />
+          {!s.recording && (
+                    <Scene
             name="court"
             style={{
               height: 238,
@@ -118,6 +142,10 @@ export function Camera() {
               Align court lines to guide
             </Label>
           </Scene>
+          )}
+          {!!saveErr && (
+            <Label style={{ color: "#ef4444", marginBottom: 8 }}>{saveErr}</Label>
+          )}
           <Card>
             <Row between>
               <Label kind="h3">Roster</Label>
@@ -203,7 +231,9 @@ export function Camera() {
             accessibilityLabel={s.recording ? "Stop recording" : "Record"}
             onPress={() => {
               time(Date.now());
-              patch({ recording: !s.recording, startedAt: Date.now() });
+              if (s.recording) setSaveErr("");
+              // phone: stopping saves the session on the backend, so show "Uploading" until it answers
+              patch({ recording: !s.recording, startedAt: Date.now(), ...(s.recording && Platform.OS !== "web" ? { uploading: true } : {}) });
             }}
             style={{
               width: 84,
@@ -230,8 +260,10 @@ export function Camera() {
           </Pressable>
           <Label kind="mono" style={{ textAlign: "center" }}>
             {s.recording
-              ? `Recording ${s.mode}… tap to stop`
-              : "Tap to start session"}
+              ? `Recording ${s.mode} with live detection… tap to stop and analyze`
+              : s.uploading
+                ? Platform.OS === "web" ? "Uploading recording…" : "Saving the session for full analysis…"
+                : "Tap to start live session"}
           </Label>
         </>
       )}

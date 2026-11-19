@@ -73,7 +73,9 @@ def detect(video: str, out_dir: str, cfg: Config | None = None, progress: bool =
     motion = CameraMotion(cfg.camera.motion_width) if moving else None
     bank = AppearanceBank(cfg.teams.sample_every)
     frames: list[FrameState] = []
-    total = info.n_frames // cfg.stride if cfg.max_frames is None else cfg.max_frames
+    total = max(1, -(-info.n_frames // cfg.stride))  # frames the sampler will actually visit
+    if cfg.max_frames is not None:
+        total = min(total, cfg.max_frames)
     for n, (idx, img) in enumerate(iter_frames(video, cfg.stride, max_frames=cfg.max_frames)):
         f = models.detect(img, idx, idx / info.fps)
         f.ball = None  # chosen by the ball tracker below, from all candidates over time
