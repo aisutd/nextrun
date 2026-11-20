@@ -13,6 +13,7 @@ import {
 } from "../components/ui";
 import { Queue, UploadFootage } from "../components/UploadFootage";
 import { LiveCamera } from "../components/LiveCamera";
+import { ModelMetrics } from "../components/ModelMetrics";
 import { GameStatus, uploadGame } from "../lib/api";
 import { useTheme } from "../theme/theme";
 import { artwork } from "../theme/artwork";
@@ -64,7 +65,7 @@ export function Camera() {
       </Row>
       <View style={{ marginTop: 14 }}>
         <Chips
-          values={["Live", "Upload", "Library"]}
+          values={["Live", "Upload", "Library", "Models"]}
           value={s.cameraTab}
           onChange={(cameraTab) => patch({ cameraTab })}
         />
@@ -73,6 +74,8 @@ export function Camera() {
         <UploadFootage />
       ) : s.cameraTab === "Library" ? (
         <Queue />
+      ) : s.cameraTab === "Models" ? (
+        <ModelMetrics />
       ) : (
         <>
           <Chips

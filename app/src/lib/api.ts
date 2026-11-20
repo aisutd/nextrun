@@ -289,3 +289,42 @@ export async function liveSave(): Promise<GameStatus> {
   }
   return r.json();
 }
+// --- model metrics (GET /metrics, backend/eval) and the speed test on the computer running the API ---
+export type Headline = { precision: number; recall: number; f1: number; map50: number | null; map50_95: number | null };
+export type Improvement = { label: string; before: number; after: number; change: number | null; kind: string; ratio?: boolean; of?: number };
+export type ModelReport = {
+  key: "players" | "ball_hoop" | "court" | "events";
+  name: string;
+  weights: string;
+  dataset: string;
+  iou_rule: string;
+  headline: Headline;
+  headline_note?: string;
+  improvements: Improvement[];
+  baseline: string;
+  classes?: { name: string; precision: number; recall: number; f1: number; map50: number; before: { precision: number; recall: number; map50: number } }[];
+  validation?: { epoch: number; precision: number; recall: number; f1: number; map50: number; map50_95: number };
+  gpu_speed?: { device: string; inference_ms: number; total_ms: number } | null;
+  court?: { found_rate: number; usable_rate: number; median_error_ft: number; synthetic_usable_rate: number; handheld_usable_rate: number };
+  tracking?: { mota: number; idf1: number; id_switches: number; track_ids: number; true_ids: number; tp: number; fp: number; fn: number };
+  events?: { name: string; precision: number; recall: number; f1: number; fp: number; fn: number; exact_count: number | null; before: { precision: number; recall: number } | null }[];
+};
+export type MetricsReport = { models: ModelReport[]; source: string };
+export type BenchmarkRow = { key: string; name: string; imgsz: number; use: "upload" | "live"; mean_ms: number; p50_ms: number; p95_ms: number; fps: number };
+export type Benchmark = { device: string; frame: string; frame_size: [number, number]; runs: number; models: BenchmarkRow[]; measured_at: string; live_frame_ms: number };
+export type BenchmarkState = { result: Benchmark | null; running: boolean; error: string | null };
+export async function getMetrics(): Promise<MetricsReport> {
+  const r = await fetch(`${API}/metrics`);
+  if (!r.ok) throw new Error(`Metrics failed (${r.status})`);
+  return r.json();
+}
+export async function getBenchmark(): Promise<BenchmarkState> {
+  const r = await fetch(`${API}/metrics/benchmark`);
+  if (!r.ok) throw new Error(`Speed test failed (${r.status})`);
+  return r.json();
+}
+export async function startBenchmark(): Promise<BenchmarkState> {
+  const r = await fetch(`${API}/metrics/benchmark`, { method: "POST" });
+  if (!r.ok) throw new Error(`Speed test failed (${r.status})`);
+  return r.json();
+}

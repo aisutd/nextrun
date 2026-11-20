@@ -308,6 +308,34 @@ def venues() -> list[str]:
     return list_venues()
 
 
+@app.get("/metrics")
+def model_metrics() -> dict:
+    """Accuracy of every model (precision / recall / F1, mAP@0.5 and @0.5:0.95, IoU rule, false positive / negative
+    reductions vs the previous version), from the recorded test-set evaluations in backend/eval/."""
+    from nextrun_cv import model_metrics as mm
+
+    try:
+        return mm.report()
+    except FileNotFoundError as e:
+        raise HTTPException(404, f"evaluation results missing: {e.filename}")
+
+
+@app.get("/metrics/benchmark")
+def metrics_benchmark() -> dict:
+    """Latest inference-speed measurement on this machine (and whether one is running)."""
+    from nextrun_cv import model_metrics as mm
+
+    return mm.benchmark_state()
+
+
+@app.post("/metrics/benchmark", status_code=202)
+def metrics_benchmark_start() -> dict:
+    """Time every active model on a real frame on this machine, in the background; poll GET /metrics/benchmark."""
+    from nextrun_cv import model_metrics as mm
+
+    return mm.start_benchmark(DATA_DIR, _models_lock)
+
+
 @app.get("/health")
 def health() -> dict:
     return {"ok": True}
