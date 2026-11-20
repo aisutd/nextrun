@@ -22,6 +22,7 @@ import numpy as np
 from scipy.optimize import linear_sum_assignment
 
 from ..config import StitchConfig
+from .appearance import body_distance
 from ..schema import FrameState
 
 
@@ -37,6 +38,14 @@ class _Ends:
     vimg: np.ndarray
     h: float  # player height in the image (px)
     n: int
+
+
+def _conflict(a: int, b: int, names: dict[int, str], teams: dict[int, str]) -> bool:
+    """Two tracks the person told apart: both named and named differently, or put on different teams. A track with
+    no name / team can join either."""
+    if a in names and b in names and names[a] != names[b]:
+        return True
+    return bool(teams.get(a) and teams.get(b) and teams[a] != teams[b])
 
 
 def _velocity(pts: list[tuple[float, np.ndarray]], vmax: float) -> np.ndarray:
@@ -65,11 +74,11 @@ def _ends(obs: list[tuple[float, tuple, tuple | None, float]], cfg: StitchConfig
 
 
 def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg: StitchConfig,
-                  names: dict[int, str] | None = None) -> dict[int, int]:
+                  names: dict[int, str] | None = None, teams: dict[int, str] | None = None) -> dict[int, int]:
     """Re-label joined tracks in `frames` (in place; merged colour embeddings in `track_emb`) -> {old id: new id}.
-    names: user tags (track id -> player); a tagged track is only joined onto a track with the same name, so two
-    differently tagged tracks never end up in one chain."""
-    names = names or {}
+    names / teams: the person's tags (track id -> name they typed / team); two tracks named differently or put on
+    different teams never end up in one chain."""
+    names, teams = names or {}, teams or {}
     obs: dict[int, list] = defaultdict(list)
     for f in frames:
         for p in f.players:
@@ -85,7 +94,7 @@ def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cf
         for b in by_start[bisect.bisect_right(starts, A.t1) : bisect.bisect_right(starts, A.t1 + cfg.max_gap_s)]:
             B = ends[b]
             gap = B.t0 - A.t1
-            if b in names and names.get(a) != names[b]:
+            if _conflict(a, b, names, teams):
                 continue
             lead = min(gap, cfg.velocity_s)  # don't extrapolate a run across the whole gap
             if A.court1 is not None and B.court0 is not None:
@@ -146,6 +155,111 @@ def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cf
         if len(chain) > 1 and embs:
             m = sum(e * n for e, n in embs)
             track_emb[t] = m / max(np.linalg.norm(m), 1e-9)
+    for c in relabel:
+        track_emb.pop(c, None)
+    for f in frames:
+        for p in f.players:
+            if p.track_id in relabel:
+                p.track_id = relabel[p.track_id]
+    return relabel
+
+
+def cover_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg: StitchConfig,
+                 names: dict[int, str] | None = None, teams: dict[int, str] | None = None,
+                 body: dict[int, np.ndarray] | None = None) -> dict[int, int]:
+    """Second, whole-clip pass after stitch_tracks: one id per real person.
+
+    stitch_tracks only joins short, well-predicted gaps, so a player who leaves the frame, hides behind others for a
+    while or is broken up by a camera pan comes back as a new "player". Here every track is a node and an edge a -> b
+    means b starts after a ends (never on screen together, so possibly the same person). Picking edges is a minimum
+    path cover: every chain is one person. A join needs evidence: the same clothes (whole-body colour signature,
+    `body`, upper and lower body separately, from frames where the player stood clear of others), or, without a
+    clean signature, a short gap the player could physically cover. Joins are scored (court reach, clothes, gap
+    length) and taken cheapest first, loosening a cost limit step by step but never past the evidence rules, and
+    stopping once there are no more people than were ever on screen at once. Two tracks seen at the same time are
+    never joined, so nobody seen is lost: the result keeps at least as many people as were ever visible together.
+    names / teams: the person's tags, as in stitch_tracks. Relabels `frames` in place and merges `track_emb`;
+    returns {old id: new id}."""
+    names, teams, body = names or {}, teams or {}, body or {}
+    obs: dict[int, list] = defaultdict(list)
+    per_frame = []
+    for f in frames:
+        per_frame.append(len(f.players))
+        for p in f.players:
+            if p.track_id is not None:
+                obs[p.track_id].append((f.t, p.feet, p.court_xy, p.height))
+    tids = sorted(obs)
+    if len(tids) < 2:
+        return {}
+    target = max(per_frame) if per_frame else len(tids)  # most people ever on screen at once
+    if len(tids) <= target:
+        return {}
+    ends = {t: _ends(obs[t], cfg) for t in tids}
+    edges: dict[tuple[int, int], float] = {}
+    for a in tids:
+        A = ends[a]
+        for b in tids:
+            B = ends[b]
+            gap = B.t0 - A.t1
+            if gap <= 0:  # overlapping (or simultaneous) tracks are two people
+                continue
+            if _conflict(a, b, names, teams):
+                continue
+            pos, reachable = 0.0, None
+            if A.court1 is not None and B.court0 is not None:
+                reach = cfg.r0_m + cfg.vmax_mps * gap
+                d = float(np.hypot(*(B.court0 - A.court1)))
+                if d > reach:  # cannot get there in time
+                    continue
+                pos, reachable = d / reach, True
+            if a in body and b in body:  # clothes decide: same outfit at any gap, a different one never
+                clothes = body_distance(body[a], body[b])
+                if clothes > cfg.cover_max_body:
+                    continue
+            elif gap <= cfg.cover_blind_gap_s and reachable:  # no clean look at one of them: only an obvious hand-off
+                clothes = cfg.cover_max_body
+            else:
+                continue
+            edges[a, b] = pos + cfg.cover_w_color * clothes / cfg.cover_max_body + min(gap, cfg.cover_gap_s) / cfg.cover_gap_s
+    if not edges:
+        return {}
+    rows = sorted({a for a, _ in edges})
+    cols = sorted({b for _, b in edges})
+    ri, ci = {t: i for i, t in enumerate(rows)}, {t: j for j, t in enumerate(cols)}
+    base = np.full((len(rows), len(cols)), np.inf)
+    for (a, b), c in edges.items():
+        base[ri[a], ci[b]] = c
+
+    def solve(limit: float) -> dict[int, int]:
+        """Cheapest set of joins each costing <= limit (an end may also stay unjoined at cost `limit`)."""
+        n, m = len(rows), len(cols)
+        C = np.full((n + m, m + n), 0.0)
+        C[:n, :m] = np.where(base <= limit, base, 1e9)
+        C[:n, m:] = np.where(np.eye(n) > 0, limit, 1e9)  # end i stays unjoined
+        C[n:, :m] = np.where(np.eye(m) > 0, limit, 1e9)  # start j stays unjoined
+        r, c = linear_sum_assignment(C)
+        return {rows[i]: cols[j] for i, j in zip(r, c) if i < n and j < m and C[i, j] < 1e8}
+
+    nxt: dict[int, int] = {}
+    for limit in cfg.cover_limits:
+        nxt = solve(limit)
+        if len(tids) - len(nxt) <= target:
+            break
+    has_prev = set(nxt.values())
+    relabel = {}
+    for t in tids:
+        if t in has_prev:
+            continue
+        chain, c = [t], t
+        while c in nxt:
+            c = nxt[c]
+            chain.append(c)
+        for c in chain[1:]:
+            relabel[c] = t
+        embs = [(track_emb[c], ends[c].n) for c in chain if c in track_emb]
+        if len(chain) > 1 and embs:
+            m_ = sum(e * n for e, n in embs)
+            track_emb[t] = m_ / max(np.linalg.norm(m_), 1e-9)
     for c in relabel:
         track_emb.pop(c, None)
     for f in frames:

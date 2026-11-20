@@ -104,3 +104,72 @@ def sample_track_colors(video: str, frames, every: int = 3) -> dict[int, list[tu
     finally:
         cap.release()
     return dict(out)
+
+
+# --- whole-body signature for joining pieces of one player (identity.stitch.cover_tracks) ----------------------
+BODY_BINS = (12, 3, 3)  # hue x saturation x value: low-saturation bins keep greys, blacks and whites apart
+
+
+def _region_hist(img: np.ndarray, x1: float, y1: float, x2: float, y2: float) -> np.ndarray | None:
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = max(0, int(x1)), max(0, int(y1)), min(w, int(x2)), min(h, int(y2))
+    if x2 - x1 < 3 or y2 - y1 < 3:
+        return None
+    hsv = cv2.cvtColor(img[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    hist = cv2.calcHist([hsv], [0, 1, 2], None, list(BODY_BINS), [0, 180, 0, 256, 0, 256]).ravel()
+    s = hist.sum()
+    return hist / s if s > 0 else None
+
+
+def body_signature(img: np.ndarray, bbox) -> np.ndarray | None:
+    """Colour histograms of the upper body (shirt) and lower body (shorts / pants), side by side, each summing to 1."""
+    x1, y1, x2, y2 = bbox
+    bw, bh = x2 - x1, y2 - y1
+    if bh < 24:
+        return None
+    up = _region_hist(img, x1 + 0.22 * bw, y1 + 0.18 * bh, x2 - 0.22 * bw, y1 + 0.5 * bh)
+    lo = _region_hist(img, x1 + 0.25 * bw, y1 + 0.55 * bh, x2 - 0.25 * bw, y1 + 0.85 * bh)
+    if up is None or lo is None:
+        return None
+    return np.concatenate([up, lo]).astype(np.float32)
+
+
+def body_key(idx: int, bbox) -> str:
+    """Stable key for one detection (track ids change when tracks are split or joined; frame + box do not)."""
+    return f"{idx}:{int(round(bbox[0]))}:{int(round(bbox[1]))}"
+
+
+def sample_body_signatures(video: str, frames, every: int = 2) -> dict[str, list[float]]:
+    """{body_key: signature} for every player standing clear of others, from every `every`-th analysed frame."""
+    want = {f.idx: f for f in frames[::max(1, every)]}
+    out: dict[str, list[float]] = {}
+    if not want:
+        return out
+    cap = cv2.VideoCapture(str(video))
+    last, i = max(want), 0
+    try:
+        while i <= last:
+            if i in want:
+                ok, img = cap.read()
+                if not ok:
+                    break
+                ps = want[i].players
+                for p in ps:
+                    if any(q is not p and _iou(p.bbox, q.bbox) > 0.02 for q in ps):
+                        continue  # touching someone: the crop would mix two people's clothes
+                    sig = body_signature(img, p.bbox)
+                    if sig is not None:
+                        out[body_key(i, p.bbox)] = sig.round(4).tolist()
+            elif not cap.grab():
+                break
+            i += 1
+    finally:
+        cap.release()
+    return out
+
+
+def body_distance(a: np.ndarray, b: np.ndarray) -> float:
+    """Hellinger distance (0 same .. 1 nothing in common), averaged over upper and lower body."""
+    n = len(a) // 2
+    d = [np.sqrt(max(0.0, 1.0 - float(np.sum(np.sqrt(a[s] * b[s]))))) for s in (slice(0, n), slice(n, None))]
+    return float(np.mean(d))

@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import gzip
 import json
+import re
 import logging
 from pathlib import Path
 
@@ -31,7 +32,7 @@ from .events.analyzer import GameAnalysis, GameAnalyzer
 from .events.overrides import apply_overrides, load_overrides
 from .identity.appearance import AppearanceBank
 from .identity.split import split_swapped_tracks
-from .identity.stitch import stitch_tracks
+from .identity.stitch import cover_tracks, stitch_tracks
 from .identity.tagging import Identities, best_tagging_frame, load_tags, resolve_identities, tagging_sheet
 from .schema import FrameState, frames_from_records, frames_to_records
 from .stats.boxscore import box_score, team_totals
@@ -191,6 +192,54 @@ def _color_samples(out: Path, vinfo: dict, frames: list[FrameState]) -> dict:
     return samples
 
 
+def _body_by_track(out: Path, vinfo: dict, frames: list[FrameState]) -> dict[int, np.ndarray]:
+    """Average whole-body colour signature per current track id (needs >= 2 clean looks). The per-detection samples
+    are made once per game and cached; they are keyed by frame + box, so they survive tracks being split or joined."""
+    from .identity.appearance import body_key, sample_body_signatures
+
+    path = out / "appearance_body.json.gz"
+    if path.exists():
+        with gzip.open(path, "rt") as fh:
+            sig = json.load(fh)
+    else:
+        video = out / "video.mp4" if (out / "video.mp4").exists() else Path(vinfo.get("path", ""))
+        if not video.exists():
+            return {}
+        sig = sample_body_signatures(str(video), frames)
+        with gzip.open(path, "wt") as fh:
+            json.dump(sig, fh)
+    per: dict[int, list] = {}
+    for f in frames:
+        for p in f.players:
+            v = sig.get(body_key(f.idx, p.bbox))
+            if v is not None and p.track_id is not None:
+                per.setdefault(p.track_id, []).append(v)
+    return {t: np.mean(np.asarray(v, np.float32), 0) for t, v in per.items() if len(v) >= 2}
+
+
+_AUTO_NAME = re.compile(r"^\s*player\s*\d+\s*$", re.I)  # "Player 53": the app's default label, not a real name
+
+
+def _tag_constraints(tags: dict) -> tuple[dict[int, str], dict[int, str]]:
+    """Which tracks the person told apart: names they typed themselves, and teams. The team picker saves every
+    track with its default "Player N" label; those labels say nothing about who is who, so they do not stop two
+    pieces of one player from being joined."""
+    names = {t: v["name"].strip() for t, v in tags.items() if v.get("name") and not _AUTO_NAME.match(v["name"])}
+    teams = {t: v["team"] for t, v in tags.items() if v.get("team")}
+    return names, teams
+
+
+def _merge_tags(tags: dict, joined: dict[int, int]) -> dict:
+    """Tags after tracks were joined: a chain keeps a typed name over a default label, and its earliest tag otherwise."""
+    out: dict = {}
+    for t in sorted(tags):
+        k = joined.get(t, t)
+        v = tags[t]
+        if k not in out or (_AUTO_NAME.match(out[k].get("name") or "player 0") and not _AUTO_NAME.match(v.get("name") or "player 0")):
+            out[k] = v
+    return out
+
+
 def identify(out: Path, cfg: Config, tags=None):
     """Who is who, without events: (identities, frames, court, fps, embeddings, view, view_court). frames are fused
     with the court (off-court people dropped when the court is reliable) and lost tracks are stitched."""
@@ -214,9 +263,13 @@ def identify(out: Path, cfg: Config, tags=None):
     log.info("fusion: %s", report)
     tags = load_tags(tags if tags is not None else (out / "tags.json" if (out / "tags.json").exists() else None))
     if cfg.stitch.enabled:  # join lost tracks to the track that picks the player up again (tags follow the join)
-        joined = stitch_tracks(frames, emb, cfg.stitch, {t: v.get("name") or f"player{t}" for t, v in tags.items()})
-        tags = {joined.get(t, t): v for t, v in tags.items()}
+        joined = stitch_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags))
+        tags = _merge_tags(tags, joined)
         log.info("stitch: %d tracks joined to earlier ones", len(joined))
+        if cfg.stitch.cover:  # then one id per real person over the whole clip (never joins people seen together)
+            joined = cover_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags), body=_body_by_track(out, vinfo, frames))
+            tags = _merge_tags(tags, joined)
+            log.info("identity: %d more tracks joined across the clip", len(joined))
     # moving camera: identities and events work in a stabilized view (camera motion undone, court.track.stabilize_view)
     view, view_court = frames, calib
     if vinfo.get("moving_camera") and (out / "camera_motion.json").exists():

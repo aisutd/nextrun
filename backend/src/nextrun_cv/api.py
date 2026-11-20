@@ -860,11 +860,16 @@ def _team_roster(game_id: str) -> tuple[Path, list[dict]]:
     cfg = Config.load(d / "config.json")
     tags = json.loads((d / "tags.json").read_text()) if (d / "tags.json").exists() else {}
     ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg)
+    min_n = max(5, int(0.02 * len(frames)))  # fewer sightings: a flicker of a detection, not a person (no card)
     if tags:
-        # saved picks cover every track of every player; a track they don't name means the tracking was improved since
-        # (e.g. a swapped id got split), so the old picks no longer line up: start again from the colour guesses
-        tracks_now = {p.track_id for f in frames for p in f.players}
-        if any(str(t) not in tags for t in tracks_now if sum(1 for f in frames for p in f.players if p.track_id == t) >= 5):
+        # saved picks cover every track of every player shown; a big track they don't name means the tracking was
+        # improved since (e.g. a swapped id got split), so the old picks no longer line up: start again from the colour
+        # guesses. Flickers never get a card, so they are never saved, and must not throw the picks away.
+        seen: dict[int, int] = {}
+        for f in frames:
+            for p in f.players:
+                seen[p.track_id] = seen.get(p.track_id, 0) + 1
+        if any(str(t) not in tags for t, n in seen.items() if n >= min_n):
             tags = {}
             ids, frames, calib, _fps, _emb, _view, _vc = pipeline.identify(d, cfg, tags={})
     info = json.loads((d / "video.json").read_text())
@@ -885,7 +890,6 @@ def _team_roster(game_id: str) -> tuple[Path, list[dict]]:
             score = p.height * p.conf * (0.5 if edge else 1.0)
             if g["best"] is None or score > g["best"][0]:
                 g["best"] = (score, f.idx, p.track_id, p.bbox)
-    min_n = max(5, int(0.02 * len(frames)))
     out = []
     for name, g in groups.items():
         if g["n"] < min_n:

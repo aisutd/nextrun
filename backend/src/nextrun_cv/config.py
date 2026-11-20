@@ -268,6 +268,17 @@ class StitchConfig:
     r0_h: float = 1.0
     max_color_dist: float = 0.5  # 1 - cosine similarity of torso colour embeddings
     w_color: float = 1.0
+    # second pass (identity.stitch.cover_tracks): join the remaining pieces into one id per person, down to the most
+    # people ever on screen at once; a join's cost = court reach used + cover_w_color * colour distance + gap share
+    cover: bool = True
+    # whole-body colour distance (Hellinger, 0..1) above which two pieces are two people. Strict on purpose: gym
+    # lighting and look-alike outfits make looser joins merge different players, which is worse than a duplicate
+    # (the team picker's "Fix duplicates" joins the rest by hand)
+    cover_max_body: float = 0.3
+    cover_blind_gap_s: float = 0.0  # >0: also join pieces without a clean look when the gap is this short and reachable
+    cover_w_color: float = 1.0
+    cover_gap_s: float = 30.0
+    cover_limits: tuple[float, ...] = (0.6, 0.9, 1.2, 1.5, 1.8, 2.2, 2.6, 3.0)  # loosened in turn until few enough people
 
 
 @dataclass
