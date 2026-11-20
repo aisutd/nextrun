@@ -39,7 +39,7 @@ def team_color(team: str | None) -> tuple[int, int, int]:
     return PALETTE[int(hashlib.md5(team.encode()).hexdigest(), 16) % len(PALETTE)]
 
 
-def _minimap(spec: CourtSpec, f: FrameState, ids: Identities, holder: str | None, scale: int = 9) -> np.ndarray:
+def _minimap(spec: CourtSpec, f: FrameState, ids: Identities, holder: str | None, scale: float = 9) -> np.ndarray:
     pad = 8
     w, h = int(spec.length * scale) + 2 * pad, int(spec.width * scale) + 2 * pad
     img = np.full((h, w, 3), (40, 90, 150), np.uint8)
@@ -54,9 +54,10 @@ def _minimap(spec: CourtSpec, f: FrameState, ids: Identities, holder: str | None
             continue
         name = ids.player(p.track_id)
         c = px(p.court_xy)
-        cv2.circle(img, c, 5, team_color(ids.player_team.get(name)), -1)
+        r = max(2, int(round(scale * 0.55)))  # dots shrink with the map
+        cv2.circle(img, c, r, team_color(ids.player_team.get(name)), -1, cv2.LINE_AA)
         if name == holder:
-            cv2.circle(img, c, 8, (0, 165, 255), 2)
+            cv2.circle(img, c, r + 3, (0, 165, 255), 2, cv2.LINE_AA)
     return img
 
 
@@ -158,14 +159,25 @@ def _player_box(img, p, col, t, holder: bool) -> None:
         cv2.line(img, (cx, cy), (cx, cy + dy * L), bc, th, cv2.LINE_AA)
 
 
-def _scoreboard(img, f, score: dict, reb: dict, ast: dict, ids, m: float, flash: dict | None = None) -> None:
-    """Team score card: one row per team with points, rebounds and assists so far. `flash` = {(team, stat): 0..1}
-    briefly highlights a number that just changed."""
+def _teams(score: dict, reb: dict, ast: dict, ids) -> list[str]:
+    return sorted({tm for tm in (set(score) | set(reb) | set(ast) | set(ids.player_team.values())) if tm and tm != "?"}) or ["A", "B"]
+
+
+def _scoreboard_size(n_teams: int, m: float) -> tuple[int, int]:
     t = lambda v: int(round(v * m))  # noqa: E731
-    teams = sorted({tm for tm in (set(score) | set(reb) | set(ast) | set(ids.player_team.values())) if tm and tm != "?"}) or ["A", "B"]
+    return t(360), t(52) + t(20) + t(40) * max(2, n_teams)
+
+
+def _scoreboard(img, f, score: dict, reb: dict, ast: dict, ids, m: float, flash: dict | None = None,
+                x0: int | None = None, y0: int | None = None) -> None:
+    """Team score card with its top-left at (x0, y0): one row per team with points, rebounds and assists so far.
+    `flash` = {(team, stat): 0..1} briefly highlights a number that just changed."""
+    t = lambda v: int(round(v * m))  # noqa: E731
+    teams = _teams(score, reb, ast, ids)
     flash = flash or {}
     w, h = t(360), t(52) + t(20) + t(40) * len(teams)
-    x0, y0 = t(14), t(14)
+    x0 = t(14) if x0 is None else x0
+    y0 = t(14) if y0 is None else y0
     _box(img, x0, y0, x0 + w, y0 + h, (22, 18, 16), 0.82)
     cv2.circle(img, (x0 + t(20), y0 + t(24)), t(6), (60, 60, 235), -1, cv2.LINE_AA)
     cv2.putText(img, "LIVE  " + f"{int(f.t // 60)}:{int(f.t % 60):02d}", (x0 + t(36), y0 + t(31)), FONT, 0.6 * m, (235, 235, 235), t(1), cv2.LINE_AA)
@@ -205,6 +217,90 @@ def _event_timeline(events, fps: float) -> list[tuple[int, str, object]]:
             out.append((int(e.data.get("make_frame") or e.data.get("shot_frame") or e.frame), "assist", e))
     out.sort(key=lambda x: (x[0], x[1] != "score"))
     return out
+
+
+# --- where the score card and minimap go ---------------------------------------------------------------------
+CORNERS = ("tl", "tr", "bl", "br")
+
+
+def _corner_rect(corner: str, w: int, h: int, W: int, H: int, pad: int) -> tuple[int, int, int, int]:
+    x1 = pad if corner[1] == "l" else W - pad - w
+    y1 = pad if corner[0] == "t" else H - pad - h
+    return x1, y1, x1 + w, y1 + h
+
+
+def _occupancy(frames: list[FrameState], W: int, H: int, cell: int) -> np.ndarray:
+    """Integral image of how often each cell holds a player (with the name tag above them), the ball or a hoop,
+    averaged over the clip: overlays should sit where the action is not."""
+    gw, gh = -(-W // cell), -(-H // cell)
+    occ = np.zeros((gh, gw), np.float32)
+    step = max(1, len(frames) // 400)
+    n = 0
+
+    def add(x1, y1, x2, y2, wgt):
+        c1, r1 = max(0, int(x1 // cell)), max(0, int(y1 // cell))
+        c2, r2 = min(gw, int(x2 // cell) + 1), min(gh, int(y2 // cell) + 1)
+        if c2 > c1 and r2 > r1:
+            occ[r1:r2, c1:c2] += wgt
+
+    for f in frames[::step]:
+        n += 1
+        for p in f.players:
+            x1, y1, x2, y2 = p.bbox
+            add(x1, y1 - 0.3 * (y2 - y1), x2, y2 + 0.1 * (y2 - y1), 1.0)  # name tag above, foot ring below
+        for r in f.rims:  # shots end here: never cover a hoop
+            x1, y1, x2, y2 = r.bbox
+            add(x1 - (x2 - x1), y1 - (x2 - x1), x2 + (x2 - x1), y2 + 2 * (x2 - x1), 3.0)
+        if f.ball is not None:
+            bx, by = f.ball.xy
+            add(bx - 3 * f.ball.radius, by - 3 * f.ball.radius, bx + 3 * f.ball.radius, by + 3 * f.ball.radius, 2.0)
+    occ /= max(1, n)
+    return np.pad(occ.cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+
+
+def _busy(integral: np.ndarray, rect, cell: int) -> float:
+    x1, y1, x2, y2 = (int(v // cell) for v in rect)
+    gh, gw = integral.shape[0] - 1, integral.shape[1] - 1
+    x1, x2, y1, y2 = max(0, x1), min(gw, x2 + 1), max(0, y1), min(gh, y2 + 1)
+    if x2 <= x1 or y2 <= y1:
+        return 0.0
+    return float(integral[y2, x2] - integral[y1, x2] - integral[y2, x1] + integral[y1, x1])
+
+
+def plan_layout(frames: list[FrameState], W: int, H: int, card: tuple[int, int], minimap: tuple[int, int] | None,
+                pad: int) -> dict[str, str]:
+    """Pick a corner for the score card (with the play-by-play feed under / over it) and one for the minimap, so
+    they cover the fewest players, hoops and ball positions over the whole video. Default: card top-left, minimap
+    bottom-right, kept unless another layout is clearly emptier."""
+    cell = max(8, min(W, H) // 48)
+    integral = _occupancy(frames, W, H, cell)
+    options = [(c, None) for c in CORNERS] if minimap is None else [(a, b) for a in CORNERS for b in CORNERS if a != b]
+    best, best_cost = ("tl", None if minimap is None else "br"), None
+    for a, b in options:
+        cost = _busy(integral, _corner_rect(a, *card, W, H, pad), cell)
+        if b is not None:
+            cost += _busy(integral, _corner_rect(b, *minimap, W, H, pad), cell)
+        cost += 0.02 * ((a != "tl") + (b is not None and b != "br"))  # small nudge towards the familiar layout
+        if best_cost is None or cost < best_cost:
+            best, best_cost = (a, b), cost
+    return {"card": best[0], "minimap": best[1]}
+
+
+def _overlaps_players(rect, players) -> bool:
+    x1, y1, x2, y2 = rect
+    for p in players:
+        a1, b1, a2, b2 = p.bbox
+        b1 -= 0.3 * (b2 - b1)
+        if a1 < x2 and x1 < a2 and b1 < y2 and y1 < b2:
+            return True
+    return False
+
+
+def _see_through(img, rect, before: np.ndarray, alpha: float) -> None:
+    """Fade what was just drawn in rect back towards `before` (the frame there before drawing)."""
+    x1, y1, x2, y2 = rect
+    roi = img[y1:y2, x1:x2]
+    roi[:] = cv2.addWeighted(roi, alpha, before, 1 - alpha, 0)
 
 
 def render(
@@ -259,6 +355,22 @@ def render(
             if writer is None:
                 size = (int(W0 / m) // 2 * 2, int(H0 / m) // 2 * 2)
                 writer = make_writer(out_path, fps, size)
+                # overlays scale with the output's shape: a portrait phone clip gets a smaller card than 16:9 footage
+                ui = m * 0.85 * min(1.0, max(0.72, min(size[0] / 1280, size[1] / 720)))  # floor keeps text readable
+                u = lambda v: max(1, int(round(v * ui)))  # noqa: E731
+                pad = u(12)
+                n_teams = len(_teams({}, {}, {}, ids))
+                card_w, card_h = _scoreboard_size(n_teams, ui)
+                feed_h = 3 * (_pill_size("REBOUND  Player 10", 0.55, 1, ui, pad=7)[1] + u(6)) + u(10)
+                mm_scale = 9 * ui
+                mm_size = None
+                if calib is not None:
+                    mm_size = (int(calib.spec.length * mm_scale) + 16, int(calib.spec.width * mm_scale) + 16)
+                    if mm_size[0] >= W0 * 0.45 or mm_size[1] >= H0 * 0.45:  # keep the minimap under ~45 % of the frame
+                        shrink = min(0.45 * W0 / mm_size[0], 0.45 * H0 / mm_size[1])
+                        mm_scale *= shrink
+                        mm_size = (int(calib.spec.length * mm_scale) + 16, int(calib.spec.width * mm_scale) + 16)
+                layout = plan_layout(frames, W0, H0, (card_w, card_h + feed_h), mm_size, pad)
             # events up to now -> running team points, rebounds and assists
             while ev_ptr < len(timeline) and timeline[ev_ptr][0] <= idx:
                 at, kind, e = timeline[ev_ptr]
@@ -349,20 +461,31 @@ def render(
                     curve = cv2.perspectiveTransform(curve.reshape(-1, 1, 2).astype(np.float64), motion_at[fk.idx]).reshape(-1, 2)
                 cv2.polylines(img, [curve.astype(np.int32)], False, (255, 255, 120), t(2), cv2.LINE_AA)
             flash = {k_: 1.0 - (idx - at) / show for k_, at in changed.items() if idx - at <= show}
-            _scoreboard(img, f, score, reb, ast, ids, m, flash)
-            # play-by-play feed under the score card: the latest rebound / assist calls
-            event_y = t(14) + t(52) + t(20) + t(40) * max(2, len({tm for tm in (set(score) | set(reb) | set(ast) | set(ids.player_team.values())) if tm and tm != "?"})) + t(10)
+            # score card in the emptiest corner for this video; see-through while a player is underneath it
+            cw_, ch_ = _scoreboard_size(len(_teams(score, reb, ast, ids)), ui)
+            cx1, cy1, cx2, cy2 = _corner_rect(layout["card"], cw_, ch_, W0, H0, pad)
+            before = img[cy1:cy2, cx1:cx2].copy()
+            _scoreboard(img, f, score, reb, ast, ids, ui, flash, cx1, cy1)
+            if _overlaps_players((cx1, cy1, cx2, cy2), f.players):
+                _see_through(img, (cx1, cy1, cx2, cy2), before, 0.45)
+            # play-by-play feed next to the card (under it at the top, over it at the bottom): latest rebound / assist calls
+            top, left = layout["card"][0] == "t", layout["card"][1] == "l"
+            ey = cy2 + u(10) if top else cy1 - u(10)
             for at, label, player, team, detail in calls[-3:]:
                 text = f"{label}  {player or 'Player'}" + (f"  >  {detail}" if detail else "")
-                _, event_y = _pill(img, text, t(14), event_y, team_color(team), 0.55, 1, m, pad=7)
-                event_y += t(6)
-            if calib is not None:
-                mm = _minimap(calib.spec, f, ids, holder, scale=max(1, int(round(9 * m))))
+                pw, ph = _pill_size(text, 0.55, 1, ui, pad=7)
+                px_ = cx1 if left else cx2 - pw
+                py_ = ey if top else ey - ph
+                _pill(img, text, px_, py_, team_color(team), 0.55, 1, ui, pad=7)
+                ey = py_ + ph + u(6) if top else py_ - u(6)
+            if calib is not None and layout["minimap"] is not None:
+                mm = _minimap(calib.spec, f, ids, holder, scale=mm_scale)
                 mh, mw = mm.shape[:2]
                 if mh < H0 and mw < W0:
-                    pad = t(10)
-                    roi = img[H0 - mh - pad : H0 - pad, W0 - mw - pad : W0 - pad]
-                    cv2.addWeighted(mm, 0.85, roi, 0.15, 0, roi)
+                    mx1, my1, mx2, my2 = _corner_rect(layout["minimap"], mw, mh, W0, H0, pad)
+                    roi = img[my1:my2, mx1:mx2]
+                    a = 0.4 if _overlaps_players((mx1, my1, mx2, my2), f.players) else 0.85
+                    cv2.addWeighted(mm, a, roi, 1 - a, 0, roi)
             if m > 1.0:
                 img = cv2.resize(img, size, interpolation=cv2.INTER_AREA)
             writer.write(img)
