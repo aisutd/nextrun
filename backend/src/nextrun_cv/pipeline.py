@@ -217,6 +217,38 @@ def _body_by_track(out: Path, vinfo: dict, frames: list[FrameState]) -> dict[int
     return {t: np.mean(np.asarray(v, np.float32), 0) for t, v in per.items() if len(v) >= 2}
 
 
+def _reid_by_track(out: Path, vinfo: dict, frames: list[FrameState]) -> dict[int, np.ndarray]:
+    """Average OSNet fingerprint per current track id (>= 3 clean crops). Per-detection fingerprints are made once per
+    game and cached (keyed by frame + box, so they survive tracks being split or joined). Empty without the weights."""
+    from .identity import reid
+    from .identity.appearance import body_key
+
+    if not reid.available():
+        return {}
+    path = out / "appearance_reid.npz"
+    if path.exists():
+        z = np.load(path)
+        sig = dict(zip(z["keys"].tolist(), z["emb"]))
+    else:
+        video = out / "video.mp4" if (out / "video.mp4").exists() else Path(vinfo.get("path", ""))
+        if not video.exists():
+            return {}
+        sig = reid.sample_fingerprints(str(video), frames)
+        np.savez_compressed(path, keys=np.array(list(sig), dtype=str), emb=np.array(list(sig.values()), np.float16).reshape(-1, 512))
+    per: dict[int, list] = {}
+    for f in frames:
+        for p in f.players:
+            v = sig.get(body_key(f.idx, p.bbox))
+            if v is not None and p.track_id is not None:
+                per.setdefault(p.track_id, []).append(np.asarray(v, np.float32))
+    out_: dict[int, np.ndarray] = {}
+    for t, v in per.items():
+        if len(v) >= 3:
+            m = np.mean(v, 0)
+            out_[t] = m / max(np.linalg.norm(m), 1e-9)
+    return out_
+
+
 _AUTO_NAME = re.compile(r"^\s*player\s*\d+\s*$", re.I)  # "Player 53": the app's default label, not a real name
 
 
@@ -263,11 +295,12 @@ def identify(out: Path, cfg: Config, tags=None):
     log.info("fusion: %s", report)
     tags = load_tags(tags if tags is not None else (out / "tags.json" if (out / "tags.json").exists() else None))
     if cfg.stitch.enabled:  # join lost tracks to the track that picks the player up again (tags follow the join)
-        joined = stitch_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags))
+        joined = stitch_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags), reid=_reid_by_track(out, vinfo, frames))
         tags = _merge_tags(tags, joined)
         log.info("stitch: %d tracks joined to earlier ones", len(joined))
         if cfg.stitch.cover:  # then one id per real person over the whole clip (never joins people seen together)
-            joined = cover_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags), body=_body_by_track(out, vinfo, frames))
+            joined = cover_tracks(frames, emb, cfg.stitch, *_tag_constraints(tags), body=_body_by_track(out, vinfo, frames),
+                                  reid=_reid_by_track(out, vinfo, frames))
             tags = _merge_tags(tags, joined)
             log.info("identity: %d more tracks joined across the clip", len(joined))
     # moving camera: identities and events work in a stabilized view (camera motion undone, court.track.stabilize_view)

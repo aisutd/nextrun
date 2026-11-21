@@ -275,6 +275,9 @@ class StitchConfig:
     # lighting and look-alike outfits make looser joins merge different players, which is worse than a duplicate
     # (the team picker's "Fix duplicates" joins the rest by hand)
     cover_max_body: float = 0.3
+    stitch_max_reid: float = 0.25  # short-gap joins: OSNet distance above which it is someone else (when both have one)
+    cover_max_reid: float = 0.1  # OSNet cosine distance above which two pieces are two people (weights/reid/)
+    cover_reid_margin: float = 0.03  # ...and the match must beat every other candidate by this much, both ways
     cover_blind_gap_s: float = 0.0  # >0: also join pieces without a clean look when the gap is this short and reachable
     cover_w_color: float = 1.0
     cover_gap_s: float = 30.0

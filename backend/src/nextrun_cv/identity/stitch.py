@@ -74,11 +74,15 @@ def _ends(obs: list[tuple[float, tuple, tuple | None, float]], cfg: StitchConfig
 
 
 def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg: StitchConfig,
-                  names: dict[int, str] | None = None, teams: dict[int, str] | None = None) -> dict[int, int]:
+                  names: dict[int, str] | None = None, teams: dict[int, str] | None = None,
+                  reid: dict[int, np.ndarray] | None = None) -> dict[int, int]:
     """Re-label joined tracks in `frames` (in place; merged colour embeddings in `track_emb`) -> {old id: new id}.
     names / teams: the person's tags (track id -> name they typed / team); two tracks named differently or put on
-    different teams never end up in one chain."""
-    names, teams = names or {}, teams or {}
+    different teams never end up in one chain.
+    reid: OSNet fingerprints per track (identity.reid). When both tracks have one it decides instead of torso colour:
+    a join between two different-looking people is refused (torso colour alone let ~1 in 4 short-gap joins go to the
+    wrong player in tests on real games)."""
+    names, teams, reid = names or {}, teams or {}, reid or {}
     obs: dict[int, list] = defaultdict(list)
     for f in frames:
         for p in f.players:
@@ -107,7 +111,12 @@ def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cf
             if d > reach:
                 continue
             app = 0.0
-            if a in track_emb and b in track_emb:
+            if a in reid and b in reid:
+                d_id = 1.0 - float(reid[a] @ reid[b])
+                if d_id > cfg.stitch_max_reid:
+                    continue
+                app = cfg.max_color_dist * d_id / cfg.stitch_max_reid
+            elif a in track_emb and b in track_emb:
                 app = 1.0 - float(track_emb[a] @ track_emb[b])
                 if app > cfg.max_color_dist:
                     continue
@@ -166,21 +175,22 @@ def stitch_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cf
 
 def cover_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg: StitchConfig,
                  names: dict[int, str] | None = None, teams: dict[int, str] | None = None,
-                 body: dict[int, np.ndarray] | None = None) -> dict[int, int]:
+                 body: dict[int, np.ndarray] | None = None, reid: dict[int, np.ndarray] | None = None) -> dict[int, int]:
     """Second, whole-clip pass after stitch_tracks: one id per real person.
 
     stitch_tracks only joins short, well-predicted gaps, so a player who leaves the frame, hides behind others for a
     while or is broken up by a camera pan comes back as a new "player". Here every track is a node and an edge a -> b
     means b starts after a ends (never on screen together, so possibly the same person). Picking edges is a minimum
-    path cover: every chain is one person. A join needs evidence: the same clothes (whole-body colour signature,
-    `body`, upper and lower body separately, from frames where the player stood clear of others), or, without a
-    clean signature, a short gap the player could physically cover. Joins are scored (court reach, clothes, gap
+    path cover: every chain is one person. A join needs evidence: the same person by re-identification (`reid`:
+    OSNet fingerprints, close enough and clearly the best match on both sides, so look-alike teammates are left
+    apart rather than guessed), else the same clothes (`body`: colour of upper and lower body), else a short gap the
+    player could physically cover (off by default). Joins are scored (court reach, clothes, gap
     length) and taken cheapest first, loosening a cost limit step by step but never past the evidence rules, and
     stopping once there are no more people than were ever on screen at once. Two tracks seen at the same time are
     never joined, so nobody seen is lost: the result keeps at least as many people as were ever visible together.
     names / teams: the person's tags, as in stitch_tracks. Relabels `frames` in place and merges `track_emb`;
     returns {old id: new id}."""
-    names, teams, body = names or {}, teams or {}, body or {}
+    names, teams, body, reid = names or {}, teams or {}, body or {}, reid or {}
     obs: dict[int, list] = defaultdict(list)
     per_frame = []
     for f in frames:
@@ -196,6 +206,7 @@ def cover_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg
         return {}
     ends = {t: _ends(obs[t], cfg) for t in tids}
     edges: dict[tuple[int, int], float] = {}
+    ident: dict[tuple[int, int], float] = {}  # re-id distance of each candidate join
     for a in tids:
         A = ends[a]
         for b in tids:
@@ -212,7 +223,13 @@ def cover_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg
                 if d > reach:  # cannot get there in time
                     continue
                 pos, reachable = d / reach, True
-            if a in body and b in body:  # clothes decide: same outfit at any gap, a different one never
+            if a in reid and b in reid:  # re-identification decides when both pieces have clean crops
+                d_id = 1.0 - float(reid[a] @ reid[b])
+                if d_id > cfg.cover_max_reid:
+                    continue
+                clothes = cfg.cover_max_body * d_id / cfg.cover_max_reid
+                ident[a, b] = d_id
+            elif a in body and b in body:  # clothes decide: same outfit at any gap, a different one never
                 clothes = body_distance(body[a], body[b])
                 if clothes > cfg.cover_max_body:
                     continue
@@ -221,6 +238,17 @@ def cover_tracks(frames: list[FrameState], track_emb: dict[int, np.ndarray], cfg
             else:
                 continue
             edges[a, b] = pos + cfg.cover_w_color * clothes / cfg.cover_max_body + min(gap, cfg.cover_gap_s) / cfg.cover_gap_s
+    # look-alikes (teammates in the same kit): keep a re-id join only when it is clearly the best for both pieces
+    if ident and cfg.cover_reid_margin > 0:
+        out_of: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        into: dict[int, list[tuple[int, float]]] = defaultdict(list)
+        for (a, b), d in ident.items():
+            out_of[a].append((b, d))
+            into[b].append((a, d))
+        for (a, b), d in ident.items():
+            rivals = [x for b2, x in out_of[a] if b2 != b] + [x for a2, x in into[b] if a2 != a]
+            if any(x < d + cfg.cover_reid_margin for x in rivals):
+                edges.pop((a, b), None)
     if not edges:
         return {}
     rows = sorted({a for a, _ in edges})
