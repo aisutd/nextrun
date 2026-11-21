@@ -1,0 +1,330 @@
+import { Platform } from "react-native";
+import { filePart } from "./filePart";
+// Set EXPO_PUBLIC_API_URL to the machine running `uvicorn nextrun_cv.api:app --host 0.0.0.0`
+// (a phone needs your computer's LAN IP, e.g. http://192.168.1.20:8000).
+// A browser on the computer itself talks to the backend directly, even when EXPO_PUBLIC_API_URL points at a
+// public tunnel for the phone: tunnels are slower and cap uploads (Cloudflare: 100 MB), so big videos stall.
+const localPage =
+  Platform.OS === "web" &&
+  typeof window !== "undefined" &&
+  ["localhost", "127.0.0.1", "[::1]"].includes(window.location.hostname);
+export const API = localPage
+  ? `http://${window.location.hostname}:8000`
+  : (process.env.EXPO_PUBLIC_API_URL ??
+    (Platform.OS === "android" ? "http://10.0.2.2:8000" : "http://localhost:8000"));
+export type GameStatus = {
+  id: string;
+  status:
+    | "queued"
+    | "detecting"
+    | "calibrating"
+    | "analyzing"
+    | "rendering"
+    | "done"
+    | "failed"
+    | "cancelled";
+  error: string | null;
+  court_calibrated: boolean;
+  court_conf: number | null;
+  progress: number;
+  frames_done: number;
+  frames_total: number;
+  max_players: number;
+  ball_frames: number;
+  rim_frames: number;
+  has_video: boolean;
+  render_error: string | null;
+  video_version: number;
+  court_method: string | null;
+  name: string;
+};
+export type TeamFramePlayer = {
+  track_id: number;
+  name: string;
+  frames_seen: number;
+  bbox: [number, number, number, number];
+};
+export type TeamFrame = {
+  time_s: number;
+  duration_s: number;
+  width: number;
+  height: number;
+  players: TeamFramePlayer[];
+};
+export type BoxScore = {
+  headline: string[];
+  players: Record<string, string | number | null>[];
+};
+export type Picked = { uri: string; name: string; mimeType?: string; file?: File };
+export async function uploadGame(v: Picked, signal?: AbortSignal): Promise<GameStatus> {
+  const body = new FormData();
+  if (Platform.OS === "web" && v.file) body.append("video", v.file, v.name);
+  else body.append("video", filePart(v.uri));
+  const r = await fetch(`${API}/games`, { method: "POST", body, signal });
+  if (!r.ok) throw new Error(`Upload failed (${r.status})`);
+  return r.json();
+}
+// Stop a game that is still uploading or processing; the backend throws it away.
+export async function cancelGame(id: string): Promise<void> {
+  const r = await fetch(`${API}/games/${id}/cancel`, { method: "POST" });
+  if (!r.ok && r.status !== 404) throw new Error(`Stop failed (${r.status})`);
+}
+export async function getGame(id: string): Promise<GameStatus> {
+  const r = await fetch(`${API}/games/${id}`);
+  if (!r.ok) throw new Error(`Status failed (${r.status})`);
+  return r.json();
+}
+export async function listGames(): Promise<GameStatus[]> {
+  const r = await fetch(`${API}/games`);
+  if (!r.ok) throw new Error(`List failed (${r.status})`);
+  return r.json();
+}
+export async function getStats(id: string): Promise<BoxScore | null> {
+  const r = await fetch(`${API}/games/${id}/stats`);
+  return r.ok ? r.json() : null;
+}
+export const previewUrl = (id: string, tick: number) =>
+  `${API}/games/${id}/preview?t=${tick}`;
+export const videoUrl = (id: string, v = 0) => `${API}/games/${id}/video?v=${v}`;
+export const frameUrl = (id: string) => `${API}/games/${id}/frame`;
+export const taggingFrameUrl = (id: string) => `${API}/games/${id}/tagging-frame`;
+export async function getTeamFrame(id: string, time_s: number): Promise<TeamFrame> {
+  const r = await fetch(`${API}/games/${id}/team-selection?time_s=${encodeURIComponent(time_s)}`);
+  if (!r.ok) throw new Error(`Could not load frame (${r.status})`);
+  return r.json();
+}
+export const teamFrameUrl = (id: string, time_s: number) =>
+  `${API}/games/${id}/team-selection/frame?time_s=${encodeURIComponent(time_s)}`;
+export async function setTeams(id: string, teamA: number[], teamB: number[]): Promise<Summary | null> {
+  const tags = Object.fromEntries([
+    ...teamA.map((track_id) => [String(track_id), { name: `Player ${track_id}`, team: "A" }] as const),
+    ...teamB.map((track_id) => [String(track_id), { name: `Player ${track_id}`, team: "B" }] as const),
+  ]);
+  const r = await fetch(`${API}/games/${id}/tags`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tags),
+  });
+  if (!r.ok) throw new Error(`Could not save team assignments (${r.status})`);
+  return r.json();
+}
+// Team picker: every person tracked anywhere in the analysed video, not just in one frame.
+export type RosterTeam = "A" | "B" | null; // null = not playing (spectator, referee, someone at the edge)
+export type RosterPlayer = {
+  key: number;
+  name: string;
+  track_ids: number[];
+  frames_seen: number;
+  seen_s: number;
+  first_s: number;
+  on_court: boolean | null; // null = no court mapping to tell
+  team: RosterTeam;
+  saved: boolean;
+  thumb_frame: number;
+  thumb_bbox: [number, number, number, number];
+};
+export async function getTeamRoster(id: string): Promise<{ players: RosterPlayer[]; has_court: boolean }> {
+  const r = await fetch(`${API}/games/${id}/team-roster`);
+  if (!r.ok) throw new Error(`Could not load the players (${r.status})`);
+  return r.json();
+}
+export const rosterThumbUrl = (id: string, p: RosterPlayer) => {
+  const [x1, y1, x2, y2] = p.thumb_bbox;
+  return `${API}/games/${id}/team-roster/thumb?frame=${p.thumb_frame}&x1=${x1}&y1=${y1}&x2=${x2}&y2=${y2}`;
+};
+export async function saveRosterTeams(id: string, players: { player: RosterPlayer; team: RosterTeam }[]): Promise<Summary | null> {
+  // every track of a person gets the same tag, so stitched / re-linked tracks all count for them
+  const tags = Object.fromEntries(
+    players.flatMap(({ player, team }) => player.track_ids.map((t) => [String(t), { name: player.name, team }] as const)),
+  );
+  const r = await fetch(`${API}/games/${id}/tags`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(tags),
+  });
+  if (!r.ok) throw new Error(`Could not save team assignments (${r.status})`);
+  return r.json();
+}
+export async function fixCourt(id: string, points: { x: number; y: number }[]): Promise<GameStatus> {
+  const r = await fetch(`${API}/games/${id}/court`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ points: points.map((p) => [p.x, p.y]) }),
+  });
+  if (!r.ok) throw new Error(`Court fix failed (${r.status})`);
+  return r.json();
+}
+export type Card = {
+  player: string;
+  team: string | null;
+  PTS: number;
+  REB: number;
+  AST: number;
+  STL: number;
+  TOV: number;
+  FGM: number;
+  FGA: number;
+  "3PM": number;
+  "3PA": number;
+  RATING: number;
+  rank: number;
+  xp: number;
+  level: number;
+  badges: string[];
+  shots: { t: number; made: boolean; three: boolean; points: number }[];
+};
+// One shot in game order. `score` is the running team score after a made basket. `uncertain` = worth a second look.
+export type ShotLog = {
+  frame: number;
+  t: number;
+  player: string | null;
+  team: string | null;
+  made: boolean;
+  points: number;
+  three: boolean;
+  reason: string;
+  confidence: number | null;
+  manual: boolean;
+  recovered: boolean;
+  uncertain: boolean;
+  score: Record<string, number> | null;
+};
+export type ScoringMode = "standard" | "3x3";
+export type Summary = {
+  teams: { team: string; PTS: number; REB: number; AST: number }[];
+  players: Card[];
+  mvp: string | null;
+  charts: string[];
+  log: ShotLog[];
+  scoring: ScoringMode;
+  unassigned_pts: number;
+};
+export async function getSummary(id: string): Promise<Summary | null> {
+  const r = await fetch(`${API}/games/${id}/summary`);
+  return r.ok ? r.json() : null;
+}
+export const chartUrl = (id: string, name: string) => `${API}/games/${id}/chart/${name}`;
+
+// Scoring corrections: each call re-counts the game on the server and returns the new summary.
+async function send(method: string, path: string, body?: unknown): Promise<Summary> {
+  const r = await fetch(`${API}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(`Could not update the score (${r.status})`);
+  return r.json();
+}
+export const fixShot = (id: string, frame: number, fix: { made?: boolean; points?: number; player?: string }) =>
+  send("POST", `/games/${id}/shots/${frame}`, fix);
+export const addBasket = (id: string, b: { t: number; player: string; points?: number }) =>
+  send("POST", `/games/${id}/baskets`, b);
+export const undoCorrection = (id: string, kind: "shot" | "add", frame: number) =>
+  send("DELETE", `/games/${id}/corrections/${kind}/${frame}`);
+export const setScoring = (id: string, mode: ScoringMode) => send("PUT", `/games/${id}/scoring`, { mode });
+
+// --- live camera ---
+export type LivePlayer = {
+  track_id: number;
+  bbox: [number, number, number, number];
+  has_ball: boolean;
+  zone?: "3PT" | "2PT" | "CLOSE";
+  court_xy?: [number, number];
+  keypoints?: [number, number, number][];
+};
+export type LiveFrame = {
+  width: number;
+  height: number;
+  ms: number;
+  model_fps: number;
+  court: { method: string; conf: number; usable: boolean } | null;
+  players: LivePlayer[];
+  ball: { xy: [number, number]; holder: number | null; r?: number; conf?: number } | null;
+  ball_candidates: { xy: [number, number]; r: number; conf: number }[];
+  rims: { bbox: [number, number, number, number]; conf: number; hoop?: string | null; agrees_with_court?: boolean }[];
+  game: LiveGame | null;
+};
+export type LiveEvent = {
+  type: "shot" | "rebound" | "assist" | "steal" | "turnover";
+  t: number;
+  player: string | null;
+  made?: boolean;
+  three?: boolean;
+  points?: number;
+  dunk?: boolean;
+  offensive?: boolean;
+  to?: string | null;
+};
+export type LiveGame = {
+  frames: number;
+  fps: number;
+  totals: {
+    points: number; shots: number; makes: number; misses: number; threes: number; rebounds: number;
+    assists: number; possessions: number; passes: number; steals: number; turnovers: number;
+  };
+  players: { player: string; track_id: number | null; PTS: number; REB: number; AST: number; FGM: number; FGA: number; TOUCH: number }[];
+  events: LiveEvent[];
+};
+// record: keep every frame on the backend so the session can be saved as a game (phones cannot record video
+// while grabbing frames in Expo Go).
+export async function liveStart(record = false): Promise<void> {
+  const r = await fetch(`${API}/live/start${record ? "?record=true" : ""}`, { method: "POST" });
+  if (!r.ok) throw new Error(`Live start failed (${r.status})`);
+}
+// jpeg: a Blob on the web, or a local file uri from the phone camera.
+export async function liveFrame(jpeg: Blob | { uri: string }): Promise<LiveFrame> {
+  const body = new FormData();
+  if (jpeg instanceof Blob) body.append("image", jpeg, "frame.jpg");
+  else body.append("image", filePart(jpeg.uri));
+  const r = await fetch(`${API}/live/frame`, { method: "POST", body });
+  if (!r.ok) throw new Error(`Live frame failed (${r.status})`);
+  return r.json();
+}
+// Turn a recorded live session (liveStart(true)) into a game and run the full analysis on it.
+export async function liveSave(): Promise<GameStatus> {
+  const r = await fetch(`${API}/live/save`, { method: "POST" });
+  if (!r.ok) {
+    const detail = await r.json().then((j) => j.detail).catch(() => "");
+    throw new Error(detail || `Saving the live session failed (${r.status})`);
+  }
+  return r.json();
+}
+// --- model metrics (GET /metrics, backend/eval) and the speed test on the computer running the API ---
+export type Headline = { precision: number; recall: number; f1: number; map50: number | null; map50_95: number | null };
+export type Improvement = { label: string; before: number; after: number; change: number | null; kind: string; ratio?: boolean; of?: number };
+export type ModelReport = {
+  key: "players" | "ball_hoop" | "court" | "events";
+  name: string;
+  weights: string;
+  dataset: string;
+  iou_rule: string;
+  headline: Headline;
+  headline_note?: string;
+  improvements: Improvement[];
+  baseline: string;
+  classes?: { name: string; precision: number; recall: number; f1: number; map50: number; before: { precision: number; recall: number; map50: number } }[];
+  validation?: { epoch: number; precision: number; recall: number; f1: number; map50: number; map50_95: number };
+  gpu_speed?: { device: string; inference_ms: number; total_ms: number } | null;
+  court?: { found_rate: number; usable_rate: number; median_error_ft: number; synthetic_usable_rate: number; handheld_usable_rate: number };
+  tracking?: { mota: number; idf1: number; id_switches: number; track_ids: number; true_ids: number; tp: number; fp: number; fn: number };
+  events?: { name: string; precision: number; recall: number; f1: number; fp: number; fn: number; exact_count: number | null; before: { precision: number; recall: number } | null }[];
+};
+export type MetricsReport = { models: ModelReport[]; source: string };
+export type BenchmarkRow = { key: string; name: string; imgsz: number; use: "upload" | "live"; mean_ms: number; p50_ms: number; p95_ms: number; fps: number };
+export type Benchmark = { device: string; frame: string; frame_size: [number, number]; runs: number; models: BenchmarkRow[]; measured_at: string; live_frame_ms: number };
+export type BenchmarkState = { result: Benchmark | null; running: boolean; error: string | null };
+export async function getMetrics(): Promise<MetricsReport> {
+  const r = await fetch(`${API}/metrics`);
+  if (!r.ok) throw new Error(`Metrics failed (${r.status})`);
+  return r.json();
+}
+export async function getBenchmark(): Promise<BenchmarkState> {
+  const r = await fetch(`${API}/metrics/benchmark`);
+  if (!r.ok) throw new Error(`Speed test failed (${r.status})`);
+  return r.json();
+}
+export async function startBenchmark(): Promise<BenchmarkState> {
+  const r = await fetch(`${API}/metrics/benchmark`, { method: "POST" });
+  if (!r.ok) throw new Error(`Speed test failed (${r.status})`);
+  return r.json();
+}

@@ -1,0 +1,22 @@
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+
+# Model weights: large binaries, shared outside git (the configs next to them stay tracked)
+backend/weights/**/*.pt
+backend/weights/**/*.onnx
+
+# Processed games and live sessions (videos, tracks, stats)
+backend/results/
+
+# Expo / Node
+node_modules/
+app/.expo/
+app/dist/
+app/web-build/
+
+# Local machine files
+.claude/
+app/phone-qr.svg
+.DS_Store
